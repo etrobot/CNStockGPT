@@ -143,8 +143,8 @@ if __name__ == '__main__':
                 continue
         t.sleep(5)
 
-
-    wdf=wdf[['stock','chance','risk','tags','score']]
     wdf.sort_values(by=['score'],ascending=False,inplace=True)
+    wdf.to_csv('wencai.csv')
+    wdf=wdf[['stock','chance','risk','tags','score']]
     nowTxt=datetime.now().strftime('%Y-%m-%d')
     renderHtml(wdf,nowTxt+'.html',nowTxt)
