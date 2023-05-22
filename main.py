@@ -101,11 +101,10 @@ class Bot():
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    wencaiPrompt = '上市交易日天数>90,近30日涨幅大于0,近30日振幅≥20%,近7日均线回踩,总市值'
+    wencaiPrompt = '上市交易日天数>90,近30日振幅≥30%'
     wdf = crawl_data_from_wencai(wencaiPrompt)
     # wdf.to_csv('wencai.csv')
     wdf['区间成交额']=pd.to_numeric(wdf['区间成交额'], errors='coerce')
-    wdf['总市值']=round(pd.to_numeric(wdf['总市值'], errors='coerce')/100000000,2)
     wdf=wdf.sort_values('区间成交额',ascending=False)[:30]
     wdf.set_index('股票代码',inplace=True)
     bot=Bot()
@@ -119,10 +118,10 @@ if __name__ == '__main__':
         news = news[news['新闻标题'].str.contains(v['股票简称'])]
         newsTitles='\n'.join(news['新闻标题'])[:1600]
 
-        stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
-        holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
+        # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
+        # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
 
-        prompt="{'股票':%s,'当前市值':%s亿,\n'新闻':'''%s''',\n'十大股东':'%s'}\n根据以上资料分析整理成dict:{'机会':'''1..\n2..\n...''','风险':'''1..\n2..\n...''','题材标签':[标签1,标签2,标签3...]}"%(v['股票简称'],v['总市值'],newsTitles,holders)
+        prompt="{'股票':'%s',\n'相关资讯':'''%s''',\n}\n根据以上资讯分析整理成一个dict:{'机会':'''1..\n2..\n...''','风险':'''1..\n2..\n...''','题材标签':[标签1,标签2,标签3...]}"%(v['股票简称'],newsTitles)
         print('Prompt:\n%s'%prompt)
         retry=10
         while retry>0:
@@ -132,17 +131,27 @@ if __name__ == '__main__':
                 match = re.findall(r'{[^{}]*}', replyTxt)
                 content = match[-1]
                 parsed = ast.literal_eval(content)
-                wdf.at[k,'chance']=str(parsed['机会']).replace('[','').replace(']','').replace(v['股票简称'],'').replace('\n','<br>')
-                wdf.at[k, 'risk'] =str(parsed['风险']).replace('[','').replace(']','').replace(v['股票简称'],'').replace('\n','<br>')
+                if isinstance(parsed['机会'], list):
+                    chances = '\n'.join(parsed['机会'])
+                else:
+                    chances = parsed['机会']
+                if isinstance(parsed['风险'], list):
+                    risks = '\n'.join(parsed['风险'])
+                else:
+                    risks = parsed['风险']
+                wdf.at[k, 'chance'] = chances.replace(v['股票简称'], '').replace('\n', '<br>')
+                wdf.at[k, 'risk'] = risks.replace(v['股票简称'], '').replace('\n', '<br>')
+                if '\n' in risks:
+                    wdf.at[k, 'score'] = len(chances) - len(risks)
                 wdf.at[k,'tags'] = '<br>'.join(parsed['题材标签'])
-                wdf.at[k,'score'] = len(parsed['机会'])-len(parsed['风险'])
                 break
             except Exception as e:
                 print(e)
                 retry-=1
+                t.sleep(10)
                 continue
         t.sleep(5)
-
+    wdf = wdf.dropna()
     wdf.sort_values(by=['score'],ascending=False,inplace=True)
     wdf.to_csv('wencai.csv')
     wdf=wdf[['stock','chance','risk','tags','score']]
