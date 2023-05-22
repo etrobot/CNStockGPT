@@ -101,12 +101,12 @@ class Bot():
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    wencaiPrompt = '上市交易日天数>90,近30日涨幅大于0,近30日振幅≥20%,近一周均线回踩,总市值'
+    wencaiPrompt = '上市交易日天数>90,近30日涨幅大于0,近30日振幅≥20%,近7日均线回踩,总市值'
     wdf = crawl_data_from_wencai(wencaiPrompt)
     # wdf.to_csv('wencai.csv')
     wdf['区间成交额']=pd.to_numeric(wdf['区间成交额'], errors='coerce')
     wdf['总市值']=round(pd.to_numeric(wdf['总市值'], errors='coerce')/100000000,2)
-    wdf=wdf.sort_values('区间成交额',ascending=False)[:10]
+    wdf=wdf.sort_values('区间成交额',ascending=False)[:30]
     wdf.set_index('股票代码',inplace=True)
     bot=Bot()
     for k,v in wdf.iterrows():

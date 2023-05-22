@@ -68,8 +68,8 @@ class xueqiuPortfolio():
             print('调仓失败: %s ' % e)
         else:
             print(resp.text)
-            with open('md/xueqiu' + mkt + datetime.now().strftime('%Y%m%d_%H ：%M') + '.json', 'w', encoding='utf-8') as f:
-                json.dump(json.loads(resp.text), f)
+            # with open('xueqiu/' + mkt + datetime.now().strftime('%Y%m%d_%H ：%M') + '.json', 'w', encoding='utf-8') as f:
+            #     json.dump(json.loads(resp.text), f)
 
     def getPosition(self):
         if len(self.position)>0:
@@ -127,7 +127,7 @@ class xueqiuPortfolio():
 
 if __name__ == "__main__":
     df=pd.read_csv('wencai.csv')[:4]
-    df['股票代码']=df['股票代码'][-2:]+df['股票代码'][:-3]
+    df['股票代码']=df['股票代码'].str[-2:]+df['股票代码'].str[:-3]
     print(df)
     xueqiuP = xueqiuPortfolio('cn')
     xueqiuPp= xueqiuP.getPosition()
@@ -139,8 +139,8 @@ if __name__ == "__main__":
         if p['stock_symbol'] not in df['股票代码']:
             p['weight'] = 0
             p["proactive"] = True
-    for s in df['股票代码']:
-        if s not in stockHeld:
-            position.append(xueqiuP.newPostition('cn',s,25))
+    for k,v in df.iterrows():
+        if v['股票代码'] not in stockHeld and v['score']>0:
+            position.append(xueqiuP.newPostition('cn',v['股票代码'],25))
     xueqiuP.trade('cn', position)
 
