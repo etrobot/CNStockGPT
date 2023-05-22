@@ -113,17 +113,20 @@ if __name__ == '__main__':
         wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s%s</a>'%(k[-2:]+symbol,k[-2:]+symbol,v['股票简称'])
         news=ak.stock_news_em(symbol)
         news['发布时间']=pd.to_datetime(news['发布时间'])
+        news['新闻标题']=news['发布时间'].dt.strftime('%Y-%m-%d ')+news['新闻标题']
+        news.sort_values(by=['发布时间'])
         news=news[news['发布时间']> datetime.now() - timedelta(days=30)]
-        news=news[~news['新闻标题'].str.contains('龙虎榜')]
-        news = news[news['新闻标题'].str.contains(v['股票简称'])]
+        news=news[~news['新闻标题'].str.contains('龙虎榜|净流|板块')]
+        if len(news)<2:
+            continue
         newsTitles='\n'.join(news['新闻标题'])[:1600]
 
         # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
         # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
 
-        prompt="{'股票':'%s',\n'相关资讯':'''%s''',\n}\n根据以上资讯分析整理成一个dict:{'机会':'''1..\n2..\n...''','风险':'''1..\n2..\n...''','题材标签':[标签1,标签2,标签3...]}"%(v['股票简称'],newsTitles)
+        prompt="{'%s相关资讯':'''%s''',\n}\n请分析整理成dict{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''','题材标签':[标签1,标签2,标签3...]}"%(v['股票简称'],newsTitles)
         print('Prompt:\n%s'%prompt)
-        retry=10
+        retry=2
         while retry>0:
             try:
                 replyTxt = bot.chatgpt(prompt)
