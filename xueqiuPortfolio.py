@@ -141,6 +141,6 @@ if __name__ == "__main__":
             p["proactive"] = True
     for k,v in df.iterrows():
         if v['股票代码'] not in stockHeld and v['score']>0:
-            position.append(xueqiuP.newPostition('cn',v['股票代码'],25))
+            position.append(xueqiuP.newPostition('cn',v['股票代码'],24))
     xueqiuP.trade('cn', position)
 

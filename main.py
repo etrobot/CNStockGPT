@@ -101,11 +101,12 @@ class Bot():
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    wencaiPrompt = '上市交易日天数>90,近30日振幅≥30%'
+    wencaiPrompt = '上市交易日天数>90，近30日振幅≥20%，总市值<1000亿'
     wdf = crawl_data_from_wencai(wencaiPrompt)
-    # wdf.to_csv('wencai.csv')
     wdf['区间成交额']=pd.to_numeric(wdf['区间成交额'], errors='coerce')
     wdf=wdf.sort_values('区间成交额',ascending=False)[:30]
+    # wdf.to_csv('wencai_o.csv')
+    # exit()
     wdf.set_index('股票代码',inplace=True)
     bot=Bot()
     for k,v in wdf.iterrows():
@@ -114,17 +115,17 @@ if __name__ == '__main__':
         news=ak.stock_news_em(symbol)
         news['发布时间']=pd.to_datetime(news['发布时间'])
         news['新闻标题']=news['发布时间'].dt.strftime('%Y-%m-%d ')+news['新闻标题']
-        news.sort_values(by=['发布时间'])
-        news=news[news['发布时间']> datetime.now() - timedelta(days=30)]
-        news=news[~news['新闻标题'].str.contains('龙虎榜|净流|板块')]
+        news.sort_values(by=['发布时间'],inplace=True)
+        # news=news[news['发布时间']> datetime.now() - timedelta(days=30)]
+        news=news[~news['新闻标题'].str.contains('龙虎榜|净流|板块|早报|死叉|金叉')]
         if len(news)<2:
             continue
-        newsTitles='\n'.join(news['新闻标题'])[:1600]
+        newsTitles='\n'.join(news['新闻标题'][-30:])[:1600]
 
         # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
         # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
 
-        prompt="{'%s相关资讯':'''%s''',\n}\n请分析整理成dict{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''','题材标签':[标签1,标签2,标签3...]}"%(v['股票简称'],newsTitles)
+        prompt="{'%s相关资讯':'''%s''',\n}\n请分析机会点和风险点，输出格式为{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''',\n'题材标签':[标签1,标签2,标签3...]}"%(v['股票简称'],newsTitles)
         print('Prompt:\n%s'%prompt)
         retry=2
         while retry>0:
@@ -151,6 +152,7 @@ if __name__ == '__main__':
             except Exception as e:
                 print(e)
                 retry-=1
+                prompt+='，请务必保持python dict格式'
                 t.sleep(10)
                 continue
         t.sleep(5)
