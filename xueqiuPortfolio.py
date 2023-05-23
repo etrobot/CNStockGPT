@@ -137,10 +137,12 @@ if __name__ == "__main__":
     stockHeld = [x['stock_symbol'] for x in position]
     for p in position:
         if p['stock_symbol'] not in df['股票代码']:
+            cash+=p['weight']
             p['weight'] = 0
             p["proactive"] = True
     for k,v in df.iterrows():
-        if v['股票代码'] not in stockHeld and v['score']>0:
+        if v['股票代码'] not in stockHeld and v['score']>0 and cash>=24:
             position.append(xueqiuP.newPostition('cn',v['股票代码'],24))
+            cash-=24
     xueqiuP.trade('cn', position)
 
