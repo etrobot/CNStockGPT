@@ -98,7 +98,6 @@ class Bot():
         return reply_text
 
 
-
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     wencaiPrompt = '上市交易日天数>90，近30日振幅≥20%，总市值<1000亿'
@@ -111,7 +110,7 @@ if __name__ == '__main__':
     bot=Bot()
     for k,v in wdf.iterrows():
         symbol=k.split('.')[0]
-        wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s%s</a>'%(k[-2:]+symbol,k[-2:]+symbol,v['股票简称'])
+        wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(k[-2:]+symbol,k[-2:]+symbol,v['股票简称'])
         news=ak.stock_news_em(symbol)
         news.drop_duplicates(subset='新闻标题',inplace=True)
         news['发布时间']=pd.to_datetime(news['发布时间'])
@@ -129,7 +128,7 @@ if __name__ == '__main__':
         # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
         # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
 
-        prompt="{'%s相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''',\n'题材标签':[标签1,标签2,标签3...]}"%(v['股票简称'],newsTitles)
+        prompt="{'%s相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':[机会点],\n'风险':[风险点],\n'题材标签':[标签1,标签2,标签3...]}"%(v['股票简称'],newsTitles)
         print('Prompt:\n%s'%prompt)
         retry=2
         while retry>0:
@@ -140,11 +139,11 @@ if __name__ == '__main__':
                 content = match[-1]
                 parsed = ast.literal_eval(content)
                 if isinstance(parsed['机会'], list):
-                    chances = '\n'.join(parsed['机会'])
+                    chances = '\n'.join( '%s. %s'%(x+1,parsed['机会'][x]) for x in range(len(parsed['机会'])))
                 else:
                     chances = parsed['机会']
                 if isinstance(parsed['风险'], list):
-                    risks = '\n'.join(parsed['风险'])
+                    risks = '\n'.join('%s. %s'%(x+1,parsed['风险'][x]) for x in range(len(parsed['风险'])))
                 else:
                     risks = parsed['风险']
                 wdf.at[k, 'chance'] = chances.replace(v['股票简称'], '').replace('\n', '<br>')
@@ -157,10 +156,10 @@ if __name__ == '__main__':
                 print(e)
                 retry-=1
                 prompt+='，请务必保持python dict格式'
-                t.sleep(10)
+                t.sleep(20)
                 continue
-        t.sleep(10)
-    wdf = wdf.dropna()
+        t.sleep(20)
+    wdf.dropna(subset=['score'],inplace=True)
     wdf.sort_values(by=['score'],ascending=False,inplace=True)
     wdf.to_csv('wencai.csv')
     wdf=wdf[['stock','chance','risk','tags','score']]
