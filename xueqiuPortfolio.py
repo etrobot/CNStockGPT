@@ -25,7 +25,8 @@ def xqStockInfo(mkt, code:str, s, h):  # 雪球股票信息
     return stock
 
 class xueqiuPortfolio():
-    def __init__(self,mkt):
+    def __init__(self,mkt,pCode):
+        self.pCode=pCode
         self.mkt = mkt
         self.position = dict()
         self.holdnum = 5
@@ -49,8 +50,8 @@ class xueqiuPortfolio():
                 del item['expiry']
         return cookie_dict
 
-    def trade(self,mkt,position_list=None):  # 调仓雪球组合
-        portfolio_code = os.environ['XQP']
+    def trade(self,position_list=None):  # 调仓雪球组合
+        portfolio_code = self.pCode
         if position_list is None:
             return
         remain_weight = 100 - sum(i.get('weight') for i in position_list)
@@ -74,21 +75,13 @@ class xueqiuPortfolio():
     def getPosition(self):
         if len(self.position)>0:
             return self.position
-        resp = self.session.get(self.p_url + os.environ['XQP'], headers=self.headers).text.replace('null','0')
+        resp = self.session.get(self.p_url + self.pCode, headers=self.headers).text.replace('null','0')
         portfolio_info = json.loads(re.search(r'(?<=SNB.cubeInfo = ).*(?=;\n)', resp).group())
         asset_balance = float(portfolio_info['net_value'])
         print(portfolio_info)
         position = portfolio_info['view_rebalancing']
         cash = asset_balance * float(position['cash'])  # 可用资金
         market = asset_balance - cash
-        p_info = [{
-            'asset_balance': asset_balance,
-            'current_balance': cash,
-            'enable_balance': cash,
-            'market_value': market,
-            'money_type': u'CNY',
-            'pre_interest': 0.25
-        }]
         self.position['holding']=position['holdings']
         self.position['cash']=int(cash)
         self.position['last']=portfolio_info['last_success_rebalancing']['holdings']
@@ -125,23 +118,27 @@ class xueqiuPortfolio():
         response = self.session.get(url=cubeUrl,headers=self.headers)
         return json.loads(response.text)
 
-if __name__ == "__main__":
-    df=pd.read_csv('wencai.csv')[:4]
-    df['股票代码']=df['股票代码'].str[-2:]+df['股票代码'].str[:-3]
+def updatePortfoio(stockfile:str,pCode,mkt='cn'):
+    df = pd.read_csv(stockfile)[:4]
+    df['股票代码'] = df['股票代码'].str[-2:] + df['股票代码'].str[:-3]
     print(df)
-    xueqiuP = xueqiuPortfolio('cn')
-    xueqiuPp= xueqiuP.getPosition()
+    xueqiuP = xueqiuPortfolio(mkt,pCode)
+    xueqiuPp = xueqiuP.getPosition()
     position = xueqiuPp['holding']
-    cash=xueqiuPp['cash']
-    latest=xueqiuPp['latest']
+    cash = xueqiuPp['cash']
+    latest = xueqiuPp['latest']
     stockHeld = [x['stock_symbol'] for x in position]
     for p in position:
         if p['stock_symbol'] not in df['股票代码'].values:
-            cash+=p['weight']
+            cash += p['weight']
             p['weight'] = 0
             p["proactive"] = True
-    for k,v in df.iterrows():
-        if v['股票代码'] not in stockHeld and v['score']>0 and cash>=24:
-            position.append(xueqiuP.newPostition('cn',v['股票代码'],24))
-            cash-=24
-    xueqiuP.trade('cn', position)
+    for k, v in df.iterrows():
+        if v['股票代码'] not in stockHeld and v['score'] > 0 and cash >= 24:
+            position.append(xueqiuP.newPostition('cn', v['股票代码'], 24))
+            cash -= 24
+    xueqiuP.trade(mkt, position)
+
+if __name__ == "__main__":
+    updatePortfoio('wencai.csv',os.environ['XQP'])
+
