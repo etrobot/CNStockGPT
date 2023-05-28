@@ -123,12 +123,12 @@ if __name__ == '__main__':
 
         if len(news)<2:
             continue
-        newsTitles='\n'.join(news['新闻标题'][:20])[:1200]
+        newsTitles='\n'.join(news['新闻标题'][:30])[:1800]
 
         # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
         # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
+        prompt="{'%s相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''',\n'题材标签':[标签]}"%(v['股票简称'],newsTitles)
 
-        prompt="{'%s相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':[机会点],\n'风险':[风险点],\n'题材标签':[标签1,标签2,标签3...]}"%(v['股票简称'],newsTitles)
         print('Prompt:\n%s'%prompt)
         retry=2
         while retry>0:
