@@ -50,7 +50,7 @@ class xueqiuPortfolio():
                 del item['expiry']
         return cookie_dict
 
-    def trade(self,position_list=None):  # 调仓雪球组合
+    def trade(self, position_list=None):  # 调仓雪球组合
         portfolio_code = self.pCode
         if position_list is None:
             return
@@ -137,7 +137,7 @@ def updatePortfoio(stockfile:str,pCode,mkt='cn'):
         if v['股票代码'] not in stockHeld and v['score'] > 0 and cash >= 24:
             position.append(xueqiuP.newPostition('cn', v['股票代码'], 24))
             cash -= 24
-    xueqiuP.trade(mkt, position)
+    xueqiuP.trade(position)
 
 if __name__ == "__main__":
     updatePortfoio('wencai.csv',os.environ['XQP'])
