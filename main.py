@@ -98,70 +98,83 @@ class Bot():
         return reply_text
 
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
+def gpt(symbol:str,name:str):
+    news = ak.stock_news_em(symbol)
+    news.drop_duplicates(subset='新闻标题', inplace=True)
+    news['发布时间'] = pd.to_datetime(news['发布时间'])
+    news['新闻标题'] = news['发布时间'].dt.strftime('%Y-%m-%d ') + news['新闻标题'].str.replace('%s：' % name,
+                                                                                                '')
+    news = news[~news['新闻标题'].str.contains('股|主力|机构|资金流')]
+    news['news'] = news['新闻标题'].str.cat(news['新闻内容'].str.split('。').str[0], sep=' ')
+    news = news[news['news'].str.contains(name)]
+    news.sort_values(by=['发布时间'], ascending=False, inplace=True)
+    # news=news[news['发布时间']> datetime.now() - timedelta(days=30)]
+    if len(news) < 2:
+        return
+    newsTitles = '\n'.join(news['新闻标题'][:30])[:1800]
+
+    # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
+    # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
+    prompt = "{'%s相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''',\n'题材标签':[标签]\n}" % (
+    name, newsTitles)
+
+    print('Prompt:\n%s' % prompt)
+    retry = 2
+    while retry > 0:
+        try:
+            replyTxt = bot.chatgpt(prompt)
+            print('ChatGPT:\n%s' % replyTxt)
+            match = re.findall(r'{[^{}]*}', replyTxt)
+            content = match[-1]
+            parsed = ast.literal_eval(content)
+            if isinstance(parsed['机会'], list):
+                chances = '\n'.join('%s. %s' % (x + 1, parsed['机会'][x]) for x in range(len(parsed['机会'])))
+            else:
+                chances = parsed['机会']
+            if isinstance(parsed['风险'], list):
+                risks = '\n'.join('%s. %s' % (x + 1, parsed['风险'][x]) for x in range(len(parsed['风险'])))
+            else:
+                risks = parsed['风险']
+            return {'chances':chances,'risks':risks,'tags':parsed['题材标签']}
+            break
+        except Exception as e:
+            print(e)
+            retry -= 1
+            prompt += '，请务必保持python dict格式'
+            t.sleep(20)
+            continue
+
+def analyze():
     wencaiPrompt = '上市交易日天数>90，近30日振幅≥20%，总市值<1000亿'
     wdf = crawl_data_from_wencai(wencaiPrompt)
+    wdf.to_csv('wencai_o.csv')
+    # return
     wdf['区间成交额']=pd.to_numeric(wdf['区间成交额'], errors='coerce')
-    wdf=wdf.sort_values('区间成交额',ascending=False)[:20]
-    # wdf.to_csv('wencai_o.csv')
-    # exit()
+    wdf=wdf.sort_values('区间成交额',ascending=False)[:50]
     wdf.set_index('股票代码',inplace=True)
-    bot=Bot()
     for k,v in wdf.iterrows():
         symbol=k.split('.')[0]
         wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(k[-2:]+symbol,k[-2:]+symbol,v['股票简称'])
-        news=ak.stock_news_em(symbol)
-        news.drop_duplicates(subset='新闻标题',inplace=True)
-        news['发布时间']=pd.to_datetime(news['发布时间'])
-        news['新闻标题']=news['发布时间'].dt.strftime('%Y-%m-%d ')+news['新闻标题'].str.replace('%s：'%v['股票简称'],'')
-        news = news[~news['新闻标题'].str.contains('股|主力|机构|资金流')]
-        news['news']=news['新闻标题'].str.cat(news['新闻内容'].str.split('。').str[0], sep=' ')
-        news = news[news['news'].str.contains(v['股票简称'])]
-        news.sort_values(by=['发布时间'],ascending=False,inplace=True)
-        # news=news[news['发布时间']> datetime.now() - timedelta(days=30)]
+        analysis = gpt(symbol,v['股票简称'])
+        if analysis is not None:
+            wdf.at[k, 'chances'] = analysis['chances'].replace(v['股票简称'], '').replace('\n', '<br>')
+            wdf.at[k, 'risks'] = analysis['risks'].replace(v['股票简称'], '').replace('\n', '<br>')
+            if '\n' in analysis['risks']:
+                wdf.at[k, 'score'] = len(analysis['chances']) - len(analysis['risks'])
+            wdf.at[k,'tags'] = '<br>'.join(analysis['tags'])
+            t.sleep(20)
 
-        if len(news)<2:
-            continue
-        newsTitles='\n'.join(news['新闻标题'][:30])[:1800]
-
-        # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
-        # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
-        prompt="{'%s相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''',\n'题材标签':[标签]}"%(v['股票简称'],newsTitles)
-
-        print('Prompt:\n%s'%prompt)
-        retry=2
-        while retry>0:
-            try:
-                replyTxt = bot.chatgpt(prompt)
-                print('ChatGPT:\n%s'%replyTxt)
-                match = re.findall(r'{[^{}]*}', replyTxt)
-                content = match[-1]
-                parsed = ast.literal_eval(content)
-                if isinstance(parsed['机会'], list):
-                    chances = '\n'.join( '%s. %s'%(x+1,parsed['机会'][x]) for x in range(len(parsed['机会'])))
-                else:
-                    chances = parsed['机会']
-                if isinstance(parsed['风险'], list):
-                    risks = '\n'.join('%s. %s'%(x+1,parsed['风险'][x]) for x in range(len(parsed['风险'])))
-                else:
-                    risks = parsed['风险']
-                wdf.at[k, 'chance'] = chances.replace(v['股票简称'], '').replace('\n', '<br>')
-                wdf.at[k, 'risk'] = risks.replace(v['股票简称'], '').replace('\n', '<br>')
-                if '\n' in risks:
-                    wdf.at[k, 'score'] = len(chances) - len(risks)
-                wdf.at[k,'tags'] = '<br>'.join(parsed['题材标签'])
-                break
-            except Exception as e:
-                print(e)
-                retry-=1
-                prompt+='，请务必保持python dict格式'
-                t.sleep(20)
-                continue
-        t.sleep(20)
     wdf.dropna(subset=['score'],inplace=True)
     wdf.sort_values(by=['score'],ascending=False,inplace=True)
     wdf.to_csv('wencai.csv')
     wdf=wdf[['stock','chance','risk','tags','score']]
     nowTxt=datetime.now().strftime('%Y-%m-%d')
     renderHtml(wdf,nowTxt+'.html',nowTxt)
+
+# Press the green button in the gutter to run the script.
+if __name__ == '__main__':
+    global bot
+    bot = Bot()
+    # gpt('002222','福晶科技')
+    # exit()
+    analyze()

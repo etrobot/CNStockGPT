@@ -50,7 +50,7 @@ class xueqiuPortfolio():
                 del item['expiry']
         return cookie_dict
 
-    def trade(self,position_list=None):  # 调仓雪球组合
+    def trade(self,mkt,position_list=None):  # 调仓雪球组合
         portfolio_code = self.pCode
         if position_list is None:
             return
