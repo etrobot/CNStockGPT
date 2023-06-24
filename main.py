@@ -1,8 +1,9 @@
 import ast
+import json
 import os
 import re
 from copy import deepcopy
-
+from urllib import parse
 import numpy as np
 import pandas as pd
 import requests
@@ -12,9 +13,53 @@ from dotenv import load_dotenv
 from revChatGPT.V1 import Chatbot as ChatGPT
 import akshare as ak
 
+from pocketbase import PocketBase
 
 PROXY='http://127.0.0.1:7890'
 load_dotenv(dotenv_path= '.env')
+
+def getUrl(url,cookie=''):
+    retryTimes = 0
+    while retryTimes < 99:
+        try:
+            response = requests.get(url,headers={"user-agent": "Mozilla", "cookie": cookie,"Connection":"close"},timeout=5)
+            return response.text
+        except Exception as e:
+            print(e.args)
+            print('retrying.....')
+            t.sleep(60)
+            retryTimes += 1
+            continue
+def cmsK(code:str,type:str='daily'):
+    """招商证券A股行情数据"""
+    typeNum={'daily':1,'monthly':3,'weekly':2}
+    code=code.upper()
+    quoFile = 'Quotation/' + code + '.csv'
+    if len(code)==8:
+        code = code[:2] + ':'+code[2:]
+    params = (
+        ('funcno', 20050),
+        ('version', '1'),
+        ('stock_list', code),
+        ('count', '10000'),
+        ('type', typeNum[type]),
+        ('field', '1:2:3:4:5:6:7:8:9:10:11:12:13:14:15:16:18:19'),
+        ('date', datetime.now().strftime("%Y%m%d")),
+        ('FQType', '2'),#不复权1，前复权2，后复权3
+    )
+    url='https://hq.cmschina.com/market/json?'+parse.urlencode(params)
+    kjson=json.loads(getUrl(url))
+    if len(kjson['results'])==0:
+        return []
+    data = kjson['results'][0]['array']
+    df=pd.DataFrame(data=data,columns=['date','open','high','close','low','yesterday','volume','amount','price_chg','percent','turnoverrate','ma5','ma10','ma20','ma30','ma60','afterAmt','afterVol'])
+    df.set_index('date',inplace=True)
+    df.index=pd.to_datetime(df.index,format='%Y%m%d')
+    df=df.apply(pd.to_numeric, errors='coerce').fillna(df)
+    if type=='daily':
+        df.to_csv(quoFile,encoding='utf-8',index_label='date',date_format='%Y-%m-%d')
+    df['percent']=df['percent'].round(4)
+    return df
 
 def crawl_data_from_wencai(question:str):
     headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
@@ -102,20 +147,23 @@ def gpt(symbol:str,name:str):
     news = ak.stock_news_em(symbol)
     news.drop_duplicates(subset='新闻标题', inplace=True)
     news['发布时间'] = pd.to_datetime(news['发布时间'])
-    news['新闻标题'] = news['发布时间'].dt.strftime('%Y-%m-%d ') + news['新闻标题'].str.replace('%s：' % name,
-                                                                                                '')
-    news = news[~news['新闻标题'].str.contains('股|主力|机构|资金流')]
+    news['新闻标题'] = news['发布时间'].dt.strftime('%Y-%m-%d ') + news['新闻标题'].str.replace('%s：' % name,'')
+    news = news[~news['新闻标题'].str.contains('股|主力|机构|资金流|家公司')]
     news['news'] = news['新闻标题'].str.cat(news['新闻内容'].str.split('。').str[0], sep=' ')
-    news = news[news['news'].str.contains(name)]
-    news.sort_values(by=['发布时间'], ascending=False, inplace=True)
-    # news=news[news['发布时间']> datetime.now() - timedelta(days=30)]
+    try:
+        news = news[news['news'].str.contains(name)]
+    except Exception as e:
+        print(e)
+        return
     if len(news) < 2:
         return
+    news.sort_values(by=['发布时间'], ascending=False, inplace=True)
+    # news=news[news['发布时间']> datetime.now() - timedelta(days=30)]
     newsTitles = '\n'.join(news['新闻标题'][:30])[:1800]
 
     # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
     # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
-    prompt = "{'%s相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''',\n'题材标签':[标签]\n}" % (
+    prompt = "{'当前日期':%s,'%s最新相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''',\n'题材标签':[标签]\n}" % (datetime.now().strftime('%Y-%m-%d'),
     name, newsTitles)
 
     print('Prompt:\n%s' % prompt)
@@ -144,32 +192,83 @@ def gpt(symbol:str,name:str):
             t.sleep(20)
             continue
 
+def getK(symbol,period='weekly'):
+    k=cmsK(symbol, period)[-61:]
+    k1th = k['close'].values[0]
+    w=10000
+    return [[
+        int(x.strftime('%y%m%d')),
+        round(y['open'] / k1th*w-w), round(y['close'] / k1th*w - w), round(y['high'] / k1th*w - w), round(y['low'] / k1th*w - w)] for x, y in
+     k[-60:].iterrows()]
+
 def analyze():
     wencaiPrompt = '上市交易日天数>90，近30日振幅≥20%，总市值<1000亿'
+    if 'wencai' in os.environ.keys():
+        wencaiPrompt = os.environ['wencai']
     wdf = crawl_data_from_wencai(wencaiPrompt)
+    print(wdf.columns)
     wdf.to_csv('wencai_o.csv')
     # return
     wdf['区间成交额']=pd.to_numeric(wdf['区间成交额'], errors='coerce')
+    wdf['总市值'] = round(pd.to_numeric(wdf['总市值'], errors='coerce')/100000000,2)
+    capsizes={"Small":10,"Middle":100,"Large":1000,"Mega":2000}
     wdf=wdf.sort_values('区间成交额',ascending=False)[:50]
     wdf.set_index('股票代码',inplace=True)
+    if 'PB' in os.environ.keys():
+        client = PocketBase(os.environ['PB'])
+        admin_data = client.admins.auth_with_password(os.environ['PBNAME'], os.environ['PBPWD'])
+        pbDf = pd.DataFrame([[x.id,x.symbol] for x in client.collection("stocks01").get_list().items],columns=['id','symbol'])
+        pbDf.set_index('symbol',inplace=True)
     for k,v in wdf.iterrows():
         symbol=k.split('.')[0]
+        wdf.at[k,'symbol']=symbol
         wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(k[-2:]+symbol,k[-2:]+symbol,v['股票简称'])
         analysis = gpt(symbol,v['股票简称'])
         if analysis is not None:
-            wdf.at[k, 'chances'] = analysis['chances'].replace(v['股票简称'], '').replace('\n', '<br>')
-            wdf.at[k, 'risks'] = analysis['risks'].replace(v['股票简称'], '').replace('\n', '<br>')
+            chances=analysis['chances'].replace(v['股票简称'], '')
+            wdf.at[k, 'chances'] = chances
+            risks=analysis['risks'].replace(v['股票简称'], '')
+            wdf.at[k, 'chanceNum'] =  len(analysis['chances'])
+            wdf.at[k, 'risks'] = risks
+            wdf.at[k, 'riskNum'] = len(risks)
+            tags=','.join(analysis['tags'])
+            wdf.at[k, 'tags'] = tags
             if '\n' in analysis['risks']:
-                wdf.at[k, 'score'] = len(analysis['chances']) - len(analysis['risks'])
-            wdf.at[k,'tags'] = '<br>'.join(analysis['tags'])
+                wdf.at[k, 'score'] = len(chances) - len(risks)
+                if 'PB' in os.environ.keys():
+                    capsize = "Tiny"
+                    for kk, vv in capsizes.items():
+                        if v['总市值'] > vv:
+                            capsize = kk
+                    uploadjson={
+                        "market":"CN",
+                        "symbol":symbol,
+                        "name":v['股票简称'],
+                        "cap":str(v['总市值'])+'亿',
+                        "capsize":capsize,
+                        "chances":chances,
+                        "week":json.dumps({"k":getK(k[-2:] + symbol,'weekly')}),
+                        "month": json.dumps({"k":getK(k[-2:] + symbol,'monthly')}),
+                        "risks":risks,
+                        "tags":tags,
+                        "score":len(chances) - len(risks)
+                    }
+                    print(uploadjson)
+                    if symbol in pbDf.index:
+                        print(client.collection("stocks01").update(pbDf.at[symbol,'id'],uploadjson))
+                    else:
+                        print(client.collection("stocks01").create(uploadjson))
             t.sleep(20)
 
     wdf.dropna(subset=['score'],inplace=True)
     wdf.sort_values(by=['score'],ascending=False,inplace=True)
     wdf.to_csv('wencai.csv')
-    wdf=wdf[['stock','chance','risk','tags','score']]
+    wdf_w=wdf[['stock','chances','risks','tags','score']]
     nowTxt=datetime.now().strftime('%Y-%m-%d')
-    renderHtml(wdf,nowTxt+'.html',nowTxt)
+    renderHtml(wdf_w,nowTxt+'.html',nowTxt)
+    wdf_json=wdf[['symbol','chanceNum','chances','riskNum','risks','tags','score']]
+    with open(nowTxt + '.json', 'w', encoding='utf_8_sig') as f:
+        json.dump({'columns':wdf_json.columns.tolist(),'data':wdf_json.values.tolist()}, f, ensure_ascii=False, indent=4)
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':

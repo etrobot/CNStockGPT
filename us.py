@@ -1,4 +1,5 @@
 import ast
+import json
 import os
 import re
 import urllib.request
@@ -11,6 +12,7 @@ import time as t
 
 import requests
 from dotenv import load_dotenv
+from pocketbase import PocketBase
 from revChatGPT.V1 import Chatbot as ChatGPT
 
 
@@ -83,6 +85,9 @@ if __name__ == '__main__':
     ydf = getActive()
     # ydf.to_csv('ydf.csv')
     bot=Bot()
+    if 'PB' in os.environ.keys():
+        client = PocketBase(os.environ['PB'])
+        admin_data = client.admins.auth_with_password(os.environ['PBNAME'], os.environ['PBPWD'])
     for k,v in ydf[:30].iterrows():
         symbol=v['symbol']
         ydf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['displayName'])
@@ -93,7 +98,7 @@ if __name__ == '__main__':
             continue
         newsTitles='\n'.join(news['summary'].values)[:2900]+'...'
 
-        prompt="{'%s(%s)相关资讯':'''%s''',\n}\n请根据资讯分析总结机会点和风险点，输出中文回答，回答格式为{'机会':[机会点],'风险':[风险点],'题材标签':[标签]}"%(v['symbol'],v['longName'],newsTitles)
+        prompt="{'%s(%s)相关资讯':'''%s''',\n}\n请根据资讯分析总结风险点和机会点，输出中文回答，回答格式为{'chances':[机会点],'risks':[风险点],'tags':[题材标签]}"%(v['symbol'],v['longName'],newsTitles)
         print('Prompt:\n%s'%prompt)
         retry=2
         while retry>0:
@@ -103,19 +108,32 @@ if __name__ == '__main__':
                 match = re.findall(r'{[^{}]*}', replyTxt)
                 content = match[-1]
                 parsed = ast.literal_eval(content)
-                if isinstance(parsed['机会'], list):
-                    chances = '\n'.join( '%s. %s'%(x+1,parsed['机会'][x]) for x in range(len(parsed['机会'])))
+                if isinstance(parsed['chances'], list):
+                    chances = '\n'.join( '%s. %s'%(x+1,parsed['chances'][x]) for x in range(len(parsed['chances'])))
                 else:
-                    chances = parsed['机会']
-                if isinstance(parsed['风险'], list):
-                    risks = '\n'.join('%s. %s'%(x+1,parsed['风险'][x]) for x in range(len(parsed['风险'])))
+                    chances = parsed['chances']
+                if isinstance(parsed['risks'], list):
+                    risks = '\n'.join('%s. %s'%(x+1,parsed['risks'][x]) for x in range(len(parsed['risks'])))
                 else:
-                    risks = parsed['风险']
-                ydf.at[k, '机会'] = chances.replace('\n', '<br>')
-                ydf.at[k, '风险'] = risks.replace('\n', '<br>')
+                    risks = parsed['risks']
+                ydf.at[k, 'chances'] = chances.replace('\n', '<br>')
+                ydf.at[k, 'risks'] = risks.replace('\n', '<br>')
                 if '\n' in risks:
-                    ydf.at[k, '得分'] = len(chances) - len(risks)
-                ydf.at[k,'标签'] = '<br>'.join(parsed['题材标签'])
+                    ydf.at[k, 'score'] = len(chances) - len(risks)
+                    if 'PB' in os.environ.keys():
+                        uploadjson = {
+                            "market": "US",
+                            "symbol": symbol,
+                            "name": v['displayName'],
+                            "chanceNum": len(parsed['risks']),
+                            "chances": chances,
+                            "riskNum": len(parsed['risks']),
+                            "risks": risks,
+                            "tags": ','.join(parsed['tags']),
+                            "score": len(chances) - len(risks)
+                        }
+                        print(client.collection("stocks").create(uploadjson))
+                ydf.at[k,'tags'] = '<br>'.join(parsed['tags'])
                 break
             except Exception as e:
                 print(e)
@@ -124,9 +142,12 @@ if __name__ == '__main__':
                 t.sleep(20)
                 continue
         t.sleep(20)
-    ydf.dropna(subset=['得分'],inplace=True)
-    ydf.sort_values(by=['得分'],ascending=False,inplace=True)
+    ydf.dropna(subset=['score'],inplace=True)
+    ydf.sort_values(by=['score'],ascending=False,inplace=True)
     ydf.to_csv('yahooFinance.csv')
-    ydf=ydf[['stock','机会','风险','标签','得分']]
+    ydf_w=ydf[['stock','chances','risks','tags','score']]
     nowTxt=datetime.now().strftime('%Y-%m-%d')
-    renderHtml(ydf,nowTxt+'_us.html',nowTxt)
+    renderHtml(ydf_w,nowTxt+'_us.html',nowTxt)
+    ydf_json=ydf[['symbol','chances','risks','tags','score']]
+    with open(nowTxt + '.json', 'w', encoding='utf_8_sig') as f:
+        json.dump({'columns':ydf_json.columns.tolist(),'data':ydf_json.values.tolist()}, f, ensure_ascii=False, indent=4)
