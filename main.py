@@ -217,7 +217,11 @@ def analyze():
     if 'PB' in os.environ.keys():
         client = PocketBase(os.environ['PB'])
         admin_data = client.admins.auth_with_password(os.environ['PBNAME'], os.environ['PBPWD'])
-        pbDf = pd.DataFrame([[x.id,x.symbol] for x in client.collection("stocks01").get_list().items],columns=['id','symbol'])
+        pbDf = pd.DataFrame([[x.id, x.symbol] for x in client.collection("stocks01").get_list(per_page=120,
+                                                                                              query_params={
+                                                                                                  "filter": 'market="CN"'}).items],
+                            columns=['id', 'symbol'])
+        pbDf.drop_duplicates(subset=['symbol'], inplace=True)
         pbDf.set_index('symbol',inplace=True)
     for k,v in wdf.iterrows():
         symbol=k.split('.')[0]
@@ -255,8 +259,10 @@ def analyze():
                     }
                     print(uploadjson)
                     if symbol in pbDf.index:
+                        print(symbol, pbDf.at[symbol, 'id'])
                         print(client.collection("stocks01").update(pbDf.at[symbol,'id'],uploadjson))
                     else:
+                        print('create' + symbol)
                         print(client.collection("stocks01").create(uploadjson))
             t.sleep(20)
 

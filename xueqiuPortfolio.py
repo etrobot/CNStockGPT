@@ -5,6 +5,16 @@ import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path= '.env')
+
+def vikaData(id:str):
+    headersVika = {
+        'Authorization':'Bearer %s'%os.environ['VIKA'],
+        'Connection': 'close'
+    }
+    vikaUrl = 'https://api.vika.cn/fusion/v1/datasheets/dstMiuU9zzihy1LzFX/records?viewId=viwoAJhnS2NMT&fieldKey=name'
+    vikajson = requests.get(vikaUrl, headers=headersVika).json()
+    print(vikajson)
+    return [x['fields']['value'] for x in vikajson['data']['records'] if x['recordId'] == id][0]
 def xqStockInfo(mkt, code:str, s, h):  # 雪球股票信息
     code=code.upper()
     data = {
@@ -41,6 +51,8 @@ class xueqiuPortfolio():
 
     def getXueqiuCookie(self):
         sbCookie=os.environ['XQCOOKIE']
+        if 'VIKA' in os.environ.keys():
+            sbCookie=vikaData('rec0JPNQgmaP1')
         cookie_dict = {}
         for record in sbCookie.split(";"):
             key, value = record.strip().split("=", 1)
