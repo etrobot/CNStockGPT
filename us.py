@@ -171,12 +171,18 @@ if __name__ == '__main__':
     if 'PB' in os.environ.keys():
         client = PocketBase(os.environ['PB'])
         admin_data = client.admins.auth_with_password(os.environ['PBNAME'], os.environ['PBPWD'])
-        pbDf = pd.DataFrame([[x.id, x.symbol] for x in client.collection("stocks01").get_list(per_page=120,query_params= {"filter": 'market="US"'}).items],
-                            columns=['id', 'symbol'])
+        pbDf = pd.DataFrame([[x.id, x.symbol, x.updated] for x in client.collection("stocks01").get_list(per_page=120,
+                                                                                                         query_params={
+                                                                                                             "filter": 'market="US"'}).items],
+                            columns=['id', 'symbol', 'updated'])
         pbDf.drop_duplicates(subset=['symbol'],inplace=True)
         pbDf.set_index('symbol', inplace=True)
     for k,v in ydf.iterrows():
         symbol=v['symbol']
+        if 'PB' in os.environ.keys():
+            if symbol in pbDf.index:
+                if pbDf.at[symbol, 'updated'].date() == datetime.now().date():
+                    continue
         ydf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['displayName'])
         try:
             news=get_yf_rss(symbol)
@@ -188,7 +194,7 @@ if __name__ == '__main__':
             continue
         newsTitles='\n'.join(news['summary'].values)[:2900]+'...'
 
-        prompt="{'%s(%s)相关资讯':'''%s''',\n}\n请根据资讯分析总结风险点和机会点，按以下格式输出中文回答：{'chances':[机会点],'risks':[风险点],'tags':[题材标签]}"%(v['symbol'],v['longName'],newsTitles)
+        prompt="{'%s(%s)相关资讯':'''%s''',\n}\n请根据资讯分析总结风险点和机会点，输出中文回答，回答格式为：{'chances':[机会点],'risks':[风险点],'tags':[题材标签]}"%(v['symbol'],v['longName'],newsTitles)
         print('Prompt:\n%s'%prompt)
         retry=2
         while retry>0:

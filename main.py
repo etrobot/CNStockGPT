@@ -144,7 +144,11 @@ class Bot():
 
 
 def gpt(symbol:str,name:str):
-    news = ak.stock_news_em(symbol)
+    print(symbol,name)
+    try:
+        news = ak.stock_news_em(symbol)
+    except:
+        return
     news.drop_duplicates(subset='新闻标题', inplace=True)
     news['发布时间'] = pd.to_datetime(news['发布时间'])
     news['新闻标题'] = news['发布时间'].dt.strftime('%Y-%m-%d ') + news['新闻标题'].str.replace('%s：' % name,'')
@@ -170,6 +174,7 @@ def gpt(symbol:str,name:str):
     retry = 2
     while retry > 0:
         try:
+            bot = Bot()
             replyTxt = bot.chatgpt(prompt)
             print('ChatGPT:\n%s' % replyTxt)
             match = re.findall(r'{[^{}]*}', replyTxt)
@@ -202,36 +207,46 @@ def getK(symbol,period='weekly'):
      k[-60:].iterrows()]
 
 def analyze():
-    wencaiPrompt = '上市交易日天数>90，近30日振幅≥20%，总市值<1000亿'
-    if 'wencai' in os.environ.keys():
-        wencaiPrompt = os.environ['wencai']
-    wdf = crawl_data_from_wencai(wencaiPrompt)
+    wdf = ak.stock_zh_a_spot_em()
+    wdf = wdf.sort_values(by=['总市值'],ascending=False)
     print(wdf.columns)
     wdf.to_csv('wencai_o.csv')
-    # return
-    wdf['区间成交额']=pd.to_numeric(wdf['区间成交额'], errors='coerce')
     wdf['总市值'] = round(pd.to_numeric(wdf['总市值'], errors='coerce')/100000000,2)
     capsizes={"Small":10,"Middle":100,"Large":1000,"Mega":2000}
-    wdf=wdf.sort_values('区间成交额',ascending=False)[:50]
-    wdf.set_index('股票代码',inplace=True)
+    capsizesCount = {"Tiny": 0,"Small": 0, "Middle": 0, "Large": 0, "Mega": 0}
+    wdf.set_index('代码',inplace=True)
     if 'PB' in os.environ.keys():
         client = PocketBase(os.environ['PB'])
-        admin_data = client.admins.auth_with_password(os.environ['PBNAME'], os.environ['PBPWD'])
-        pbDf = pd.DataFrame([[x.id, x.symbol] for x in client.collection("stocks01").get_list(per_page=120,
+        client.admins.auth_with_password(os.environ['PBNAME'], os.environ['PBPWD'])
+        pbDf = pd.DataFrame([[x.id, x.symbol,x.updated] for x in client.collection("stocks01").get_list(per_page=120,
                                                                                               query_params={
                                                                                                   "filter": 'market="CN"'}).items],
-                            columns=['id', 'symbol'])
+                            columns=['id', 'symbol', 'updated'])
         pbDf.drop_duplicates(subset=['symbol'], inplace=True)
         pbDf.set_index('symbol',inplace=True)
     for k,v in wdf.iterrows():
-        symbol=k.split('.')[0]
-        wdf.at[k,'symbol']=symbol
-        wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(k[-2:]+symbol,k[-2:]+symbol,v['股票简称'])
-        analysis = gpt(symbol,v['股票简称'])
+        if k.startswith('6'):
+            symbol = 'SH'+k
+        else:
+            symbol = 'SZ'+k
+        capsize = "Tiny"
+        for kk, vv in capsizes.items():
+            if v['总市值'] > vv:
+                capsize = kk
+        capsizesCount[capsize] = capsizesCount[capsize] + 1
+        if capsizesCount[capsize] > 10:
+            continue
+        if 'PB' in os.environ.keys():
+            if k in pbDf.index:
+                if pbDf.at[k, 'updated'].date() == datetime.now().date():
+                    continue
+        wdf.at[k,'symbol']=k
+        wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['名称'])
+        analysis = gpt(symbol,v['名称'])
         if analysis is not None:
-            chances=analysis['chances'].replace(v['股票简称'], '')
+            chances=analysis['chances'].replace(v['名称'], '')
             wdf.at[k, 'chances'] = chances
-            risks=analysis['risks'].replace(v['股票简称'], '')
+            risks=analysis['risks'].replace(v['名称'], '')
             wdf.at[k, 'chanceNum'] =  len(analysis['chances'])
             wdf.at[k, 'risks'] = risks
             wdf.at[k, 'riskNum'] = len(risks)
@@ -240,32 +255,30 @@ def analyze():
             if '\n' in analysis['risks']:
                 wdf.at[k, 'score'] = len(chances) - len(risks)
                 if 'PB' in os.environ.keys():
-                    capsize = "Tiny"
-                    for kk, vv in capsizes.items():
-                        if v['总市值'] > vv:
-                            capsize = kk
                     uploadjson={
                         "market":"CN",
-                        "symbol":symbol,
-                        "name":v['股票简称'],
+                        "symbol":k,
+                        # "name":v['股票简称'],
+                        "name": v['名称'],
                         "cap":str(v['总市值'])+'亿',
                         "capsize":capsize,
                         "chances":chances,
-                        "week":json.dumps({"k":getK(k[-2:] + symbol,'weekly')}),
-                        "month": json.dumps({"k":getK(k[-2:] + symbol,'monthly')}),
+                        "week":json.dumps({"k":getK(symbol,'weekly')}),
+                        "month": json.dumps({"k":getK(symbol,'monthly')}),
                         "risks":risks,
                         "tags":tags,
                         "score":len(chances) - len(risks)
                     }
                     print(uploadjson)
-                    if symbol in pbDf.index:
-                        print(symbol, pbDf.at[symbol, 'id'])
-                        print(client.collection("stocks01").update(pbDf.at[symbol,'id'],uploadjson))
+                    if k in pbDf.index:
+                        print(k, pbDf.at[k, 'id'])
+                        print(client.collection("stocks01").update(pbDf.at[k,'id'],uploadjson))
                     else:
-                        print('create' + symbol)
+                        print('create' + k)
                         print(client.collection("stocks01").create(uploadjson))
             t.sleep(20)
-
+    if 'score' not in wdf.columns:
+        return
     wdf.dropna(subset=['score'],inplace=True)
     wdf.sort_values(by=['score'],ascending=False,inplace=True)
     wdf.to_csv('wencai.csv')
@@ -278,8 +291,6 @@ def analyze():
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    global bot
-    bot = Bot()
     # gpt('002222','福晶科技')
     # exit()
     analyze()
