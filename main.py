@@ -233,12 +233,13 @@ def analyze():
         for kk, vv in capsizes.items():
             if v['总市值'] > vv:
                 capsize = kk
-        capsizesCount[capsize] = capsizesCount[capsize] + 1
         if capsizesCount[capsize] > 10:
             continue
         if 'PB' in os.environ.keys():
             if k in pbDf.index:
+                print(capsizesCount)
                 if pbDf.at[k, 'updated'].date() == datetime.now().date():
+                    capsizesCount[capsize] = capsizesCount[capsize] + 1
                     continue
         wdf.at[k,'symbol']=k
         wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['名称'])
@@ -276,6 +277,7 @@ def analyze():
                     else:
                         print('create' + k)
                         print(client.collection("stocks01").create(uploadjson))
+            capsizesCount[capsize] = capsizesCount[capsize] + 1
             t.sleep(20)
     if 'score' not in wdf.columns:
         return
