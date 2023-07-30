@@ -132,7 +132,6 @@ class xueqiuPortfolio():
 
 def updatePortfoio(stockfile:str,pCode,mkt='cn'):
     df = pd.read_csv(stockfile)[:4]
-    df['股票代码'] = df['股票代码'].str[-2:] + df['股票代码'].str[:-3]
     print(df)
     xueqiuP = xueqiuPortfolio(mkt,pCode)
     xueqiuPp = xueqiuP.getPosition()
@@ -141,13 +140,13 @@ def updatePortfoio(stockfile:str,pCode,mkt='cn'):
     latest = xueqiuPp['latest']
     stockHeld = [x['stock_symbol'] for x in position]
     for p in position:
-        if p['stock_symbol'] not in df['股票代码'].values:
+        if p['stock_symbol'] not in df['symbol'].values:
             cash += p['weight']
             p['weight'] = 0
             p["proactive"] = True
     for k, v in df.iterrows():
-        if v['股票代码'] not in stockHeld and v['score'] > 0 and cash >= 24:
-            position.append(xueqiuP.newPostition('cn', v['股票代码'], 24))
+        if v['symbol'] not in stockHeld and v['score'] > 0 and cash >= 24:
+            position.append(xueqiuP.newPostition('cn', v['symbol'], 24))
             cash -= 24
     xueqiuP.trade(mkt, position)
 

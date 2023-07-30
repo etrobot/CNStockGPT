@@ -11,12 +11,15 @@ from datetime import *
 import time as t
 from dotenv import load_dotenv
 from revChatGPT.V1 import Chatbot as ChatGPT
+# import poe
+import openai
 import akshare as ak
 
 from pocketbase import PocketBase
 
 PROXY='http://127.0.0.1:7890'
 load_dotenv(dotenv_path= '.env')
+openai.api_key = os.environ['OPENAI']
 
 def getUrl(url,cookie=''):
     retryTimes = 0
@@ -142,28 +145,40 @@ class Bot():
             pass
         return reply_text
 
+def tencentNews(symbol:str):
+    params = {
+        'page': '1',
+        'symbol': symbol,
+        'n': '51',
+        '_var': 'finance_notice',
+        'type': '2',
+        # '_': '1690699699389',
+    }
+
+    response = requests.get(
+        'https://proxy.finance.qq.com/ifzqgtimg/appstock/news/info/search',
+        params=params,
+        headers={"user-agent": "Mozilla","Connection":"close"}
+    )
+    df = pd.DataFrame(json.loads(response.text[len('finance_notice='):])['data']['data'])
+    df.to_csv('tNews.csv')
+    return df
 
 def gpt(symbol:str,name:str):
     print(symbol,name)
     try:
-        news = ak.stock_news_em(symbol)
+        news = tencentNews(symbol.lower())
     except:
         return
-    news.drop_duplicates(subset='新闻标题', inplace=True)
-    news['发布时间'] = pd.to_datetime(news['发布时间'])
-    news['新闻标题'] = news['发布时间'].dt.strftime('%Y-%m-%d ') + news['新闻标题'].str.replace('%s：' % name,'')
-    news = news[~news['新闻标题'].str.contains('股|主力|机构|资金流|家公司')]
-    news['news'] = news['新闻标题'].str.cat(news['新闻内容'].str.split('。').str[0], sep=' ')
-    try:
-        news = news[news['news'].str.contains(name)]
-    except Exception as e:
-        print(e)
-        return
+    news.drop_duplicates(subset='title', inplace=True)
+    news['time'] = pd.to_datetime(news['time'])
+    news['title'] = news['time'].dt.strftime('%Y-%m-%d ') + news['title'].str.replace('%s：' % name,'')
+    news = news[~news['title'].str.contains('股|主力|机构|资金流|家公司')]
     if len(news) < 2:
         return
-    news.sort_values(by=['发布时间'], ascending=False, inplace=True)
+    news.sort_values(by=['time'], ascending=False, inplace=True)
     # news=news[news['发布时间']> datetime.now() - timedelta(days=30)]
-    newsTitles = '\n'.join(news['新闻标题'][:30])[:1800]
+    newsTitles = '\n'.join(news['title'][:30])[:1800]
 
     # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
     # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
@@ -174,8 +189,14 @@ def gpt(symbol:str,name:str):
     retry = 2
     while retry > 0:
         try:
-            bot = Bot()
-            replyTxt = bot.chatgpt(prompt)
+            # bot = Bot()
+            # replyTxt = bot.chatgpt(prompt)
+            # replyTxt = ""
+            # for t in bot.send_message("a2_2",prompt):
+            #     replyTxt = t['text']
+            completion = openai.ChatCompletion.create(model="gpt-3.5-turbo",
+                                                      messages=[{"role": "user", "content": prompt}])
+            replyTxt = completion.choices[0].message.content
             print('ChatGPT:\n%s' % replyTxt)
             match = re.findall(r'{[^{}]*}', replyTxt)
             content = match[-1]
@@ -241,7 +262,7 @@ def analyze():
                 if pbDf.at[k, 'updated'].date() == datetime.now().date():
                     capsizesCount[capsize] = capsizesCount[capsize] + 1
                     continue
-        wdf.at[k,'symbol']=k
+        wdf.at[k,'symbol']=symbol
         wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['名称'])
         analysis = gpt(symbol,v['名称'])
         if analysis is not None:
@@ -295,4 +316,5 @@ def analyze():
 if __name__ == '__main__':
     # gpt('002222','福晶科技')
     # exit()
+    # bot = poe.Client(os.environ['POE'])
     analyze()
