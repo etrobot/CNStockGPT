@@ -52,7 +52,7 @@ def cmsK(code:str,type:str='daily'):
     )
     url='https://hq.cmschina.com/market/json?'+parse.urlencode(params)
     kjson=json.loads(getUrl(url))
-    if len(kjson['results'])==0:
+    if 'results' not in kjson.keys() or  len(kjson['results'])==0:
         return []
     data = kjson['results'][0]['array']
     df=pd.DataFrame(data=data,columns=['date','open','high','close','low','yesterday','volume','amount','price_chg','percent','turnoverrate','ma5','ma10','ma20','ma30','ma60','afterAmt','afterVol'])
@@ -168,12 +168,13 @@ def gpt(symbol:str,name:str):
     print(symbol,name)
     try:
         news = tencentNews(symbol.lower())
-    except:
+        news.drop_duplicates(subset='title', inplace=True)
+        news['time'] = pd.to_datetime(news['time'])
+        news['title'] = news['time'].dt.strftime('%Y-%m-%d ') + news['title'].str.replace('%s：' % name, '')
+        news = news[~news['title'].str.contains('股|主力|机构|资金流|家公司')]
+    except Exception as e:
+        print(e)
         return
-    news.drop_duplicates(subset='title', inplace=True)
-    news['time'] = pd.to_datetime(news['time'])
-    news['title'] = news['time'].dt.strftime('%Y-%m-%d ') + news['title'].str.replace('%s：' % name,'')
-    news = news[~news['title'].str.contains('股|主力|机构|资金流|家公司')]
     if len(news) < 2:
         return
     news.sort_values(by=['time'], ascending=False, inplace=True)
@@ -182,21 +183,21 @@ def gpt(symbol:str,name:str):
 
     # stock_main_stock_holder_df = ak.stock_main_stock_holder(stock=symbol)
     # holders = ','.join(stock_main_stock_holder_df['股东名称'][:10].tolist())
-    prompt = "{'当前日期':%s,'%s最新相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''',\n'题材标签':[标签]\n}" % (datetime.now().strftime('%Y-%m-%d'),
+    prompt = "{'当前日期':%s,'%s最新相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为dict:{\n'机会':'''\n1...\n2...\n...''',\n'风险':'''\n1...\n2...\n...''',\n'题材标签':[标签]\n}" % (datetime.now().strftime('%Y-%m-%d'),
     name, newsTitles)
 
     print('Prompt:\n%s' % prompt)
     retry = 2
     while retry > 0:
         try:
-            # bot = Bot()
-            # replyTxt = bot.chatgpt(prompt)
+            bot = Bot()
+            replyTxt = bot.chatgpt(prompt)
             # replyTxt = ""
             # for t in bot.send_message("a2_2",prompt):
             #     replyTxt = t['text']
-            completion = openai.ChatCompletion.create(model="gpt-3.5-turbo",
-                                                      messages=[{"role": "user", "content": prompt}])
-            replyTxt = completion.choices[0].message.content
+            # completion = openai.ChatCompletion.create(model="gpt-3.5-turbo",
+            #                                           messages=[{"role": "user", "content": prompt}])
+            # replyTxt = completion.choices[0].message.content
             print('ChatGPT:\n%s' % replyTxt)
             match = re.findall(r'{[^{}]*}', replyTxt)
             content = match[-1]
