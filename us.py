@@ -3,6 +3,7 @@ import json
 import os
 import re
 from urllib import request,parse
+from litellm import completion
 
 import feedparser
 import numpy as np
@@ -12,14 +13,12 @@ import time as t
 
 import requests
 from akshare.utils import demjson
-from dotenv import load_dotenv
-from pocketbase import PocketBase
-from revChatGPT.V1 import Chatbot as ChatGPT
+from dotenv import load_dotenv,find_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed,wait
 
 
 PROXY='http://127.0.0.1:7890'
-load_dotenv(dotenv_path= '.env')
+load_dotenv(find_dotenv())
 
 def getActive():
     params = {
@@ -74,26 +73,6 @@ def renderHtml(df,filename:str,title:str):
     )
     with open(filename, 'w') as f:
         f.write(html_string.replace('<table border="1" class="dataframe">','<table id="container">').replace('<th>','<th role="columnheader">'))
-
-class Bot():
-    def __init__(self):
-        self.chatgptBot = None
-    def chatgpt(self, queryText: str):
-        reply_text,convId = None,None
-        if self.chatgptBot is None:
-            self.chatgptBot =ChatGPT(config={"access_token": os.environ['CHATGPT'],'proxy':PROXY})
-        for data in self.chatgptBot.ask(queryText):
-            convId=data['conversation_id']
-            reply_text = data["message"]
-        if convId is not None:
-            try:
-                print(convId)
-                t.sleep(2)
-                self.chatgptBot.delete_conversation(convId)
-            except Exception as e:
-                print(e)
-                pass
-        return reply_text
 
 def getK(symbol,period='week'):
     k=tencentK('us',symbol, period)[-61:]
@@ -168,21 +147,9 @@ if __name__ == '__main__':
     ydf.to_csv('ydf.csv')
     ydf['marketCap'] = round(pd.to_numeric(ydf['marketCap'], errors='coerce') / 100000000, 2)
     capsizes = {"Small": 10, "Middle": 100, "Large": 1000, "Mega": 2000}
-    if 'PB' in os.environ.keys():
-        client = PocketBase(os.environ['PB'])
-        admin_data = client.admins.auth_with_password(os.environ['PBNAME'], os.environ['PBPWD'])
-        pbDf = pd.DataFrame([[x.id, x.symbol, x.updated] for x in client.collection("stocks01").get_list(per_page=120,
-                                                                                                         query_params={
-                                                                                                             "filter": 'market="US"'}).items],
-                            columns=['id', 'symbol', 'updated'])
-        pbDf.drop_duplicates(subset=['symbol'],inplace=True)
-        pbDf.set_index('symbol', inplace=True)
+
     for k,v in ydf.iterrows():
         symbol=v['symbol']
-        if 'PB' in os.environ.keys():
-            if symbol in pbDf.index:
-                if pbDf.at[symbol, 'updated'].date() == datetime.now().date():
-                    continue
         ydf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['displayName'])
         try:
             news=get_yf_rss(symbol)
@@ -199,8 +166,10 @@ if __name__ == '__main__':
         retry=2
         while retry>0:
             try:
-                bot = Bot()
-                replyTxt = bot.chatgpt(prompt)
+                replyTxt = replyTxt = completion(model='openai/gpt-3.5-turbo-1106', messages=[{
+        "role": "user",
+        "content": prompt,
+    }], api_key=os.environ['API_KEY'],api_base=os.environ['API_BASE_URL'])["choices"][0]["message"]["content"]
                 print('ChatGPT:\n%s'%replyTxt)
                 match = re.findall(r'{[^{}]*}', replyTxt)
                 content = match[-1]
@@ -217,31 +186,6 @@ if __name__ == '__main__':
                 ydf.at[k, 'risks'] = risks.replace('\n', '<br>')
                 if '\n' in risks:
                     ydf.at[k, 'score'] = len(chances) - len(risks)
-                    if 'PB' in os.environ.keys():
-                        capsize = "Tiny"
-                        for kk, vv in capsizes.items():
-                            if v['marketCap'] > vv:
-                                capsize = kk
-                        uploadjson = {
-                            "market": "US",
-                            "symbol": symbol,
-                            "name": v['displayName'],
-                            "cap": str(v['marketCap']) + '亿',
-                            "capsize": capsize,
-                            "chances": chances,
-                            "week": json.dumps({"k": getK(symbol, 'week')}),
-                            "month": json.dumps({"k": getK(symbol, 'month')}),
-                            "risks": risks,
-                            "tags": ','.join(parsed['tags']),
-                            "score": len(chances) - len(risks)
-                        }
-                        print(uploadjson)
-                        if symbol in pbDf.index:
-                            print(symbol,pbDf.at[symbol, 'id'])
-                            print(client.collection("stocks01").update(pbDf.at[symbol, 'id'], uploadjson))
-                        else:
-                            print('create'+symbol)
-                            print(client.collection("stocks01").create(uploadjson))
                 ydf.at[k,'tags'] = '<br>'.join(parsed['tags'])
                 break
             except Exception as e:

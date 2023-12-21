@@ -9,17 +9,14 @@ import pandas as pd
 import requests
 from datetime import *
 import time as t
-from dotenv import load_dotenv
-from revChatGPT.V1 import Chatbot as ChatGPT
-# import poe
-import openai
+from dotenv import load_dotenv,find_dotenv
+from litellm import completion
 import akshare as ak
 
 from pocketbase import PocketBase
 
 PROXY='http://127.0.0.1:7890'
-load_dotenv(dotenv_path= '.env')
-openai.api_key = os.environ['OPENAI']
+load_dotenv(find_dotenv())
 
 def getUrl(url,cookie=''):
     retryTimes = 0
@@ -128,23 +125,6 @@ def renderHtml(df,filename:str,title:str):
     with open(filename, 'w') as f:
         f.write(html_string.replace('<table border="1" class="dataframe">','<table id="container">').replace('<th>','<th role="columnheader">'))
 
-class Bot():
-    def __init__(self):
-        self.chatgptBot = None
-    def chatgpt(self, queryText: str):
-        reply_text,convId = None,None
-        if self.chatgptBot is None:
-            self.chatgptBot =ChatGPT(config={"access_token": os.environ['CHATGPT'],'proxy':PROXY})
-        for data in self.chatgptBot.ask(queryText):
-            convId=data['conversation_id']
-            reply_text = data["message"]
-        try:
-            t.sleep(2)
-            self.chatgptBot.delete_conversation(convId)
-        except:
-            pass
-        return reply_text
-
 def tencentNews(symbol:str):
     params = {
         'page': '1',
@@ -190,14 +170,10 @@ def gpt(symbol:str,name:str):
     retry = 2
     while retry > 0:
         try:
-            bot = Bot()
-            replyTxt = bot.chatgpt(prompt)
-            # replyTxt = ""
-            # for t in bot.send_message("a2_2",prompt):
-            #     replyTxt = t['text']
-            # completion = openai.ChatCompletion.create(model="gpt-3.5-turbo",
-            #                                           messages=[{"role": "user", "content": prompt}])
-            # replyTxt = completion.choices[0].message.content
+            replyTxt = completion(model='openai/gpt-3.5-turbo-1106', messages=[{
+        "role": "user",
+        "content": prompt,
+    }], api_key=os.environ['API_KEY'],api_base=os.environ['API_BASE_URL'])["choices"][0]["message"]["content"]
             print('ChatGPT:\n%s' % replyTxt)
             match = re.findall(r'{[^{}]*}', replyTxt)
             content = match[-1]
@@ -237,15 +213,7 @@ def analyze():
     capsizes={"Small":10,"Middle":100,"Large":1000,"Mega":2000}
     capsizesCount = {"Tiny": 0,"Small": 0, "Middle": 0, "Large": 0, "Mega": 0}
     wdf.set_index('代码',inplace=True)
-    if 'PB' in os.environ.keys():
-        client = PocketBase(os.environ['PB'])
-        client.admins.auth_with_password(os.environ['PBNAME'], os.environ['PBPWD'])
-        pbDf = pd.DataFrame([[x.id, x.symbol,x.updated] for x in client.collection("stocks01").get_list(per_page=120,
-                                                                                              query_params={
-                                                                                                  "filter": 'market="CN"'}).items],
-                            columns=['id', 'symbol', 'updated'])
-        pbDf.drop_duplicates(subset=['symbol'], inplace=True)
-        pbDf.set_index('symbol',inplace=True)
+
     for k,v in wdf.iterrows():
         if k.startswith('6'):
             symbol = 'SH'+k
@@ -257,12 +225,7 @@ def analyze():
                 capsize = kk
         if capsizesCount[capsize] > 10:
             continue
-        if 'PB' in os.environ.keys():
-            if k in pbDf.index:
-                print(capsizesCount)
-                if pbDf.at[k, 'updated'].date() == datetime.now().date():
-                    capsizesCount[capsize] = capsizesCount[capsize] + 1
-                    continue
+
         wdf.at[k,'symbol']=symbol
         wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['名称'])
         analysis = gpt(symbol,v['名称'])
@@ -277,28 +240,6 @@ def analyze():
             wdf.at[k, 'tags'] = tags
             if '\n' in analysis['risks']:
                 wdf.at[k, 'score'] = len(chances) - len(risks)
-                if 'PB' in os.environ.keys():
-                    uploadjson={
-                        "market":"CN",
-                        "symbol":k,
-                        # "name":v['股票简称'],
-                        "name": v['名称'],
-                        "cap":str(v['总市值'])+'亿',
-                        "capsize":capsize,
-                        "chances":chances,
-                        "week":json.dumps({"k":getK(symbol,'weekly')}),
-                        "month": json.dumps({"k":getK(symbol,'monthly')}),
-                        "risks":risks,
-                        "tags":tags,
-                        "score":len(chances) - len(risks)
-                    }
-                    print(uploadjson)
-                    if k in pbDf.index:
-                        print(k, pbDf.at[k, 'id'])
-                        print(client.collection("stocks01").update(pbDf.at[k,'id'],uploadjson))
-                    else:
-                        print('create' + k)
-                        print(client.collection("stocks01").create(uploadjson))
             capsizesCount[capsize] = capsizesCount[capsize] + 1
             t.sleep(20)
     if 'score' not in wdf.columns:
@@ -315,7 +256,4 @@ def analyze():
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    # gpt('002222','福晶科技')
-    # exit()
-    # bot = poe.Client(os.environ['POE'])
     analyze()

@@ -8,7 +8,11 @@
 
 ### 如何运行
 1. pip install -r requirements.txt
-2. 访问https://chat.openai.com/api/auth/session ,获取access_token,然后新建.env文件，写入CHATGPT="获取的token"
+2. 新建.env文件，加入api-key和base
+```commandline
+API_KEY = 'sk-xxxxxxxxxxxx'
+API_BASE_URL = 'https://api.xxxxxxxx/v1'
+```
 3. 运行main.py,将会生成html文件
 
 ### TODO
