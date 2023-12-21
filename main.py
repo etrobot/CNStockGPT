@@ -61,55 +61,23 @@ def cmsK(code:str,type:str='daily'):
     df['percent']=df['percent'].round(4)
     return df
 
-def crawl_data_from_wencai(question:str):
-    headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-               'Accept-Encoding': 'gzip, deflate',
-               'Accept-Language': 'zh-CN,zh;q=0.9',
-               'Cache-Control': 'max-age=0',
-               'Connection': 'keep-alive',
-               'Upgrade-Insecure-Requests': '1',
-               #   'If-Modified-Since': 'Thu, 11 Jan 2018 07:05:01 GMT',
-               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.140 Safari/537.36'}
-
-    headers_wc = deepcopy(headers)
-    headers_wc["Referer"] = "http://www.iwencai.com/unifiedwap/unified-wap/result/get-stock-pick"
-    headers_wc["Host"] = "www.iwencai.com"
-    headers_wc["X-Requested-With"] = "XMLHttpRequest"
-
-    Question_url = "http://www.iwencai.com/unifiedwap/unified-wap/result/get-stock-pick"
-    """通过问财接口抓取数据
-
-    Arguments:
-        trade_date {[type]} -- [description]
-        fields {[type]} -- [description]
-
-    Returns:
-        [type] -- [description]
-    """
-    payload = {
-        # 查询问句
-        "question": question,
-        # 返回查询记录总数
-        "perpage": 5000,
-        "query_type": "stock"
+def hot(timeType='day',listType='normal'):
+    '''
+    timeType:day,hour
+    listType:normal,skyrocket,tech,value,trend
+    '''
+    params = {
+        'stock_type': 'a',
+        'type': timeType,
+        'list_type': listType,
     }
+    response = requests.get(
+        'https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/stock',
+        params=params,
+        headers={'User-Agent': 'Mozilla'},
+    )
+    return pd.DataFrame(response.json()['data']['stock_list'])
 
-    try:
-        response = requests.get(Question_url, params=payload, headers=headers_wc)
-
-        if response.status_code == 200:
-            json = response.json()
-            df_data = pd.DataFrame(json["data"]["data"])
-            # 规范返回的columns，去掉[xxxx]内容,并将重复的命名为.1.2...
-            cols = pd.Series([re.sub(r'\[[^)]*\]', '', col) for col in pd.Series(df_data.columns)])
-            for dup in cols[cols.duplicated()].unique():
-                cols[cols[cols == dup].index.values.tolist()] = [dup + '.' + str(i) if i != 0 else dup for i in range(sum(cols == dup))]
-            df_data.columns=cols
-            return df_data
-        else:
-            print("连接访问接口失败")
-    except Exception as e:
-        print(e)
 
 def renderHtml(df,filename:str,title:str):
     df.index = np.arange(1, len(df) + 1)
@@ -214,36 +182,63 @@ def analyze():
     capsizesCount = {"Tiny": 0,"Small": 0, "Middle": 0, "Large": 0, "Mega": 0}
     wdf.set_index('代码',inplace=True)
 
+# Press the green button in the gutter to run the script.
+if __name__ == '__main__':
+    wdf = hot()
+    wdf.to_csv('wencai_o.csv',index=False)
+    exit()
+    wdf.set_index('code',inplace=True)
+    bot=Bot()
     for k,v in wdf.iterrows():
-        if k.startswith('6'):
-            symbol = 'SH'+k
-        else:
-            symbol = 'SZ'+k
-        capsize = "Tiny"
-        for kk, vv in capsizes.items():
-            if v['总市值'] > vv:
-                capsize = kk
-        if capsizesCount[capsize] > 10:
-            continue
+        symbol={17:'SH',33:'SZ'}[v['market']]+k
+        wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['name'])
+        news=ak.stock_news_em(k)
+        news.drop_duplicates(subset='新闻标题',inplace=True)
+        news['发布时间']=pd.to_datetime(news['发布时间'])
+        news['新闻标题']=news['发布时间'].dt.strftime('%Y-%m-%d ')+news['新闻标题'].str.replace('%s：'%v['name'],'')
+        news = news[~news['新闻标题'].str.contains('股|主力|机构|资金流')]
+        news['news']=news['新闻标题'].str.cat(news['新闻内容'].str.split('。').str[0], sep=' ')
+        news = news[news['news'].str.contains(v['name'])]
+        news.sort_values(by=['发布时间'],ascending=False,inplace=True)
+        # news=news[news['发布时间']> datetime.now() - timedelta(days=30)]
 
-        wdf.at[k,'symbol']=symbol
-        wdf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['名称'])
-        analysis = gpt(symbol,v['名称'])
-        if analysis is not None:
-            chances=analysis['chances'].replace(v['名称'], '')
-            wdf.at[k, 'chances'] = chances
-            risks=analysis['risks'].replace(v['名称'], '')
-            wdf.at[k, 'chanceNum'] =  len(analysis['chances'])
-            wdf.at[k, 'risks'] = risks
-            wdf.at[k, 'riskNum'] = len(risks)
-            tags=','.join(analysis['tags'])
-            wdf.at[k, 'tags'] = tags
-            if '\n' in analysis['risks']:
-                wdf.at[k, 'score'] = len(chances) - len(risks)
-            capsizesCount[capsize] = capsizesCount[capsize] + 1
-            t.sleep(20)
-    if 'score' not in wdf.columns:
-        return
+        if len(news)<2:
+            continue
+        newsTitles='\n'.join(news['新闻标题'][:30])[:1800]
+
+        prompt="{'%s相关资讯':'''%s''',\n}\n请分析总结机会点和风险点，输出格式为{'机会':'''1..\n2..\n...''',\n'风险':'''1..\n2..\n...''',\n'题材标签':[标签]}"%(v['name'],newsTitles)
+
+        print('Prompt:\n%s'%prompt)
+        retry=2
+        while retry>0:
+            try:
+                replyTxt = bot.chatgpt(prompt)
+                print('ChatGPT:\n%s'%replyTxt)
+                match = re.findall(r'{[^{}]*}', replyTxt)
+                content = match[-1]
+                parsed = ast.literal_eval(content)
+                if isinstance(parsed['机会'], list):
+                    chances = '\n'.join( '%s. %s'%(x+1,parsed['机会'][x]) for x in range(len(parsed['机会'])))
+                else:
+                    chances = parsed['机会']
+                if isinstance(parsed['风险'], list):
+                    risks = '\n'.join('%s. %s'%(x+1,parsed['风险'][x]) for x in range(len(parsed['风险'])))
+                else:
+                    risks = parsed['风险']
+                wdf.at[k, 'chance'] = chances.replace(v['name'], '').replace('\n', '<br>')
+                wdf.at[k, 'risk'] = risks.replace(v['name'], '').replace('\n', '<br>')
+                if '\n' in risks:
+                    wdf.at[k, 'score'] = len(chances) - len(risks)
+                wdf.at[k,'tags'] = '<br>'.join(parsed['题材标签'])
+                break
+            except Exception as e:
+                print(e)
+                retry-=1
+                prompt+='，请务必保持python dict格式'
+                t.sleep(20)
+                continue
+        t.sleep(20)
+
     wdf.dropna(subset=['score'],inplace=True)
     wdf.sort_values(by=['score'],ascending=False,inplace=True)
     wdf.to_csv('wencai.csv')
