@@ -2,3 +2,4 @@ pandas
 revChatGPT
 python-dotenv
 akshare
+litellm

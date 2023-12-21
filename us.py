@@ -1,7 +1,9 @@
 import ast
+import json
 import os
 import re
-import urllib.request
+from urllib import request,parse
+from litellm import completion
 
 import feedparser
 import numpy as np
@@ -10,12 +12,13 @@ from datetime import *
 import time as t
 
 import requests
-from dotenv import load_dotenv
-from revChatGPT.V1 import Chatbot as ChatGPT
+from akshare.utils import demjson
+from dotenv import load_dotenv,find_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed,wait
 
 
 PROXY='http://127.0.0.1:7890'
-load_dotenv(dotenv_path= '.env')
+load_dotenv(find_dotenv())
 
 def getActive():
     params = {
@@ -36,13 +39,26 @@ def getActive():
 
 def get_yf_rss(ticker):
     yf_rss_url = 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=%s&region=US&lang=en-US&count=100'
-    proxy_support = urllib.request.ProxyHandler({ 'https': PROXY})
-    opener = urllib.request.build_opener(proxy_support)
-    urllib.request.install_opener(opener)
+    proxy_support = request.ProxyHandler({ 'https': PROXY})
+    opener = request.build_opener(proxy_support)
+    request.install_opener(opener)
     feed = feedparser.parse(yf_rss_url % ticker)
     df = pd.json_normalize(feed.entries)
     df['published'] = pd.to_datetime(df["published"],format='mixed').dt.tz_convert('Asia/Shanghai')
     return df
+
+def getUrl(url,cookie=''):
+    retryTimes = 0
+    while retryTimes < 99:
+        try:
+            response = requests.get(url,headers={"user-agent": "Mozilla", "cookie": cookie,"Connection":"close"},timeout=5)
+            return response.text
+        except Exception as e:
+            print(e.args)
+            print('retrying.....')
+            t.sleep(60)
+            retryTimes += 1
+            continue
 
 def renderHtml(df,filename:str,title:str):
     df.index = np.arange(1, len(df) + 1)
@@ -58,64 +74,119 @@ def renderHtml(df,filename:str,title:str):
     with open(filename, 'w') as f:
         f.write(html_string.replace('<table border="1" class="dataframe">','<table id="container">').replace('<th>','<th role="columnheader">'))
 
-class Bot():
-    def __init__(self):
-        self.chatgptBot = None
-    def chatgpt(self, queryText: str):
-        reply_text,convId = None,None
-        if self.chatgptBot is None:
-            self.chatgptBot =ChatGPT(config={"access_token": os.environ['CHATGPT'],'proxy':PROXY})
-        for data in self.chatgptBot.ask(queryText):
-            convId=data['conversation_id']
-            reply_text = data["message"]
+def getK(symbol,period='week'):
+    k=tencentK('us',symbol, period)[-61:]
+    k1th = k['close'].values[0]
+    w=10000
+    return [[
+        int(x.strftime('%y%m%d')),
+        round(y['open'] / k1th*w-w), round(y['close'] / k1th*w - w), round(y['high'] / k1th*w - w), round(y['low'] / k1th*w - w)] for x, y in
+     k[-60:].iterrows()]
+
+def tencentK(mkt:str = 'us',symbol: str = "QQQ",period='week') -> pd.DataFrame:
+    # symbol=symbol.lower()
+    # A股的mkt为''
+    if mkt=='us' and '.' not in symbol:
+        symbolTxt=requests.get(f"http://smartbox.gtimg.cn/s3/?q={symbol}&t=us").text
+        symbol = mkt + symbolTxt.split("~")[1].upper()
+    elif mkt=='hk':
+        symbol=mkt+symbol
+    """
+        腾讯证券-获取有股票数据的第一天, 注意这个数据是腾讯证券的历史数据第一天
+        http://gu.qq.com/usQQQ.OQ/
+        :param symbol: 带市场标识的股票代码
+        :type symbol: str
+        :return: 开始日期
+        :rtype: pandas.DataFrame
+        """
+    headers = {"user-agent": "Mozilla", "Connection": "close"}
+    url = "http://web.ifzq.gtimg.cn/appstock/app/fqkline/get?"
+    if mkt=='us':
+        url = "https://web.ifzq.gtimg.cn/appstock/app/usfqkline/get?"
+    temp_df = pd.DataFrame()
+    url_list=[]
+    params = {
+        "_var": f"kline_{period}qfq",
+        "param": f"{symbol},{period},,,320,qfq",
+        "r": "0.012820108110342066",
+    }
+    url_list.append(url + parse.urlencode(params))
+    # print(url_list)
+    with ThreadPoolExecutor(max_workers=10) as executor:  # optimally defined number of threads
+        responeses = [executor.submit(getUrl, url) for url in url_list]
+        wait(responeses)
+
+    for res in responeses:
+        text=res.result()
         try:
-            t.sleep(2)
-            self.chatgptBot.delete_conversation(convId)
+            inner_temp_df = pd.DataFrame(
+                demjson.decode(text[text.find("={") + 1:])["data"][symbol][period]
+            )
         except:
-            pass
-        return reply_text
+            inner_temp_df = pd.DataFrame(
+                demjson.decode(text[text.find("={") + 1:])["data"][symbol]["qfq%s"%period]
+            )
+        temp_df = pd.concat([temp_df, inner_temp_df],ignore_index=True)
 
-
-
+    if temp_df.shape[1] == 6:
+        temp_df.columns = ["date", "open", "close", "high", "low", "amount"]
+    else:
+        temp_df = temp_df.iloc[:, :6]
+        temp_df.columns = ["date", "open", "close", "high", "low", "amount"]
+    temp_df.index = pd.to_datetime(temp_df["date"])
+    del temp_df["date"]
+    temp_df = temp_df.astype("float")
+    temp_df.drop_duplicates(inplace=True)
+    temp_df.rename(columns={'amount':'volume'}, inplace = True)
+    # temp_df.to_csv('Quotation/'+symbol+'.csv',encoding='utf-8',index_label='date',date_format='%Y-%m-%d')
+    return temp_df
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     ydf = getActive()
-    # ydf.to_csv('ydf.csv')
-    bot=Bot()
-    for k,v in ydf[:30].iterrows():
+    ydf.to_csv('ydf.csv')
+    ydf['marketCap'] = round(pd.to_numeric(ydf['marketCap'], errors='coerce') / 100000000, 2)
+    capsizes = {"Small": 10, "Middle": 100, "Large": 1000, "Mega": 2000}
+
+    for k,v in ydf.iterrows():
         symbol=v['symbol']
         ydf.at[k,'stock']='<a href="https://xueqiu.com/S/%s">%s<br>%s</a>'%(symbol,symbol,v['displayName'])
-        news=get_yf_rss(symbol)
+        try:
+            news=get_yf_rss(symbol)
+        except:
+            continue
         news['summary']=news['published'].dt.strftime('%Y-%m-%d ')+news['summary']
         news.to_csv(symbol+'.csv')
         if len(news)<2:
             continue
         newsTitles='\n'.join(news['summary'].values)[:2900]+'...'
 
-        prompt="{'%s(%s)相关资讯':'''%s''',\n}\n请根据资讯分析总结机会点和风险点，输出中文回答，回答格式为{'机会':[机会点],'风险':[风险点],'题材标签':[标签]}"%(v['symbol'],v['longName'],newsTitles)
+        prompt="{'%s(%s)相关资讯':'''%s''',\n}\n请根据资讯分析总结风险点和机会点，输出中文回答，回答格式为：{'chances':[机会点],'risks':[风险点],'tags':[题材标签]}"%(v['symbol'],v['longName'],newsTitles)
         print('Prompt:\n%s'%prompt)
         retry=2
         while retry>0:
             try:
-                replyTxt = bot.chatgpt(prompt)
+                replyTxt = replyTxt = completion(model='openai/gpt-3.5-turbo-1106', messages=[{
+        "role": "user",
+        "content": prompt,
+    }], api_key=os.environ['API_KEY'],api_base=os.environ['API_BASE_URL'])["choices"][0]["message"]["content"]
                 print('ChatGPT:\n%s'%replyTxt)
                 match = re.findall(r'{[^{}]*}', replyTxt)
                 content = match[-1]
                 parsed = ast.literal_eval(content)
-                if isinstance(parsed['机会'], list):
-                    chances = '\n'.join( '%s. %s'%(x+1,parsed['机会'][x]) for x in range(len(parsed['机会'])))
+                if isinstance(parsed['chances'], list):
+                    chances = '\n'.join( '%s. %s'%(x+1,parsed['chances'][x]) for x in range(len(parsed['chances'])))
                 else:
-                    chances = parsed['机会']
-                if isinstance(parsed['风险'], list):
-                    risks = '\n'.join('%s. %s'%(x+1,parsed['风险'][x]) for x in range(len(parsed['风险'])))
+                    chances = parsed['chances']
+                if isinstance(parsed['risks'], list):
+                    risks = '\n'.join('%s. %s'%(x+1,parsed['risks'][x]) for x in range(len(parsed['risks'])))
                 else:
-                    risks = parsed['风险']
-                ydf.at[k, '机会'] = chances.replace('\n', '<br>')
-                ydf.at[k, '风险'] = risks.replace('\n', '<br>')
+                    risks = parsed['risks']
+                ydf.at[k, 'chances'] = chances.replace('\n', '<br>')
+                ydf.at[k, 'risks'] = risks.replace('\n', '<br>')
                 if '\n' in risks:
-                    ydf.at[k, '得分'] = len(chances) - len(risks)
-                ydf.at[k,'标签'] = '<br>'.join(parsed['题材标签'])
+                    ydf.at[k, 'score'] = len(chances) - len(risks)
+                ydf.at[k,'tags'] = '<br>'.join(parsed['tags'])
                 break
             except Exception as e:
                 print(e)
@@ -123,10 +194,13 @@ if __name__ == '__main__':
                 prompt+='，请务必保持python dict格式'
                 t.sleep(20)
                 continue
-        t.sleep(20)
-    ydf.dropna(subset=['得分'],inplace=True)
-    ydf.sort_values(by=['得分'],ascending=False,inplace=True)
+        t.sleep(30)
+    ydf.dropna(subset=['score'],inplace=True)
+    ydf.sort_values(by=['score'],ascending=False,inplace=True)
     ydf.to_csv('yahooFinance.csv')
-    ydf=ydf[['stock','机会','风险','标签','得分']]
+    ydf_w=ydf[['stock','chances','risks','tags','score']]
     nowTxt=datetime.now().strftime('%Y-%m-%d')
-    renderHtml(ydf,nowTxt+'_us.html',nowTxt)
+    renderHtml(ydf_w,nowTxt+'_us.html',nowTxt)
+    ydf_json=ydf[['symbol','chances','risks','tags','score']]
+    with open(nowTxt + '.json', 'w', encoding='utf_8_sig') as f:
+        json.dump({'columns':ydf_json.columns.tolist(),'data':ydf_json.values.tolist()}, f, ensure_ascii=False, indent=4)

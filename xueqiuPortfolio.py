@@ -5,6 +5,16 @@ import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path= '.env')
+
+def vikaData(id:str):
+    headersVika = {
+        'Authorization':'Bearer %s'%os.environ['VIKA'],
+        'Connection': 'close'
+    }
+    vikaUrl = 'https://api.vika.cn/fusion/v1/datasheets/dstMiuU9zzihy1LzFX/records?viewId=viwoAJhnS2NMT&fieldKey=name'
+    vikajson = requests.get(vikaUrl, headers=headersVika).json()
+    print(vikajson)
+    return [x['fields']['value'] for x in vikajson['data']['records'] if x['recordId'] == id][0]
 def xqStockInfo(mkt, code:str, s, h):  # 雪球股票信息
     code=code.upper()
     data = {
@@ -41,6 +51,8 @@ class xueqiuPortfolio():
 
     def getXueqiuCookie(self):
         sbCookie=os.environ['XQCOOKIE']
+        if 'VIKA' in os.environ.keys():
+            sbCookie=vikaData('rec0JPNQgmaP1')
         cookie_dict = {}
         for record in sbCookie.split(";"):
             key, value = record.strip().split("=", 1)
@@ -51,6 +63,7 @@ class xueqiuPortfolio():
         return cookie_dict
 
     def trade(self, position_list=None):  # 调仓雪球组合
+
         portfolio_code = self.pCode
         if position_list is None:
             return
@@ -120,7 +133,6 @@ class xueqiuPortfolio():
 
 def updatePortfoio(stockfile:str,pCode,mkt='cn'):
     df = pd.read_csv(stockfile)[:4]
-    df['股票代码'] = df['股票代码'].str[-2:] + df['股票代码'].str[:-3]
     print(df)
     xueqiuP = xueqiuPortfolio(mkt,pCode)
     xueqiuPp = xueqiuP.getPosition()
@@ -129,13 +141,13 @@ def updatePortfoio(stockfile:str,pCode,mkt='cn'):
     latest = xueqiuPp['latest']
     stockHeld = [x['stock_symbol'] for x in position]
     for p in position:
-        if p['stock_symbol'] not in df['股票代码'].values:
+        if p['stock_symbol'] not in df['symbol'].values:
             cash += p['weight']
             p['weight'] = 0
             p["proactive"] = True
     for k, v in df.iterrows():
-        if v['股票代码'] not in stockHeld and v['score'] > 0 and cash >= 24:
-            position.append(xueqiuP.newPostition('cn', v['股票代码'], 24))
+        if v['symbol'] not in stockHeld and v['score'] > 0 and cash >= 24:
+            position.append(xueqiuP.newPostition('cn', v['symbol'], 24))
             cash -= 24
     xueqiuP.trade(position)
 
