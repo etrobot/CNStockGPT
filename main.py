@@ -186,7 +186,6 @@ def analyze():
 if __name__ == '__main__':
     wdf = hot()
     wdf.to_csv('wencai_o.csv',index=False)
-    exit()
     wdf.set_index('code',inplace=True)
     bot=Bot()
     for k,v in wdf.iterrows():
