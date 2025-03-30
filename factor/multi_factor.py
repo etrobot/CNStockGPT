@@ -2,6 +2,7 @@ import logging
 import pandas as pd
 import akshare as ak
 import os
+import time
 from datetime import datetime, timedelta
 from factor.support_factor import calculate_support_factor  # Changed from relative to absolute import
 from factor.momentum_factor import calculate_momentum_factor  # Changed from relative to absolute import
@@ -19,6 +20,9 @@ def get_stock_data():
     try:
         logger.info('开始获取股票数据')
         data = ak.stock_zh_a_spot().sort_values('成交额', ascending=False)
+        # 确保列名统一，如果存在"股票代码"列，将其重命名为"代码"
+        if "股票代码" in data.columns and "代码" not in data.columns:
+            data = data.rename(columns={"股票代码": "代码"})
         logger.info(f'成功获取股票数据，共{len(data)}条记录')
         return data
     except Exception as e:
@@ -49,16 +53,38 @@ def get_stock_history_data(stock_codes, days=60):
         
         # 遍历每只股票，获取日K数据
         for stock_code in stock_codes:
-            try:
-                # 使用akshare获取个股日K数据
-                stock_data = ak.stock_zh_a_hist(symbol=stock_code, start_date=start_date, end_date=end_date, adjust="qfq")
-                # 确保列名统一，如果存在"股票代码"列，将其重命名为"代码"
-                if "股票代码" in stock_data.columns and "代码" not in stock_data.columns:
-                    stock_data = stock_data.rename(columns={"股票代码": "代码"})
-                history_data[stock_code] = stock_data
-                logger.debug(f'成功获取{stock_code}的历史数据，共{len(stock_data)}条记录')
-            except Exception as e:
-                logger.warning(f'获取股票{stock_code}的历史数据失败: {str(e)}')
+            max_retries = 3
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    # 使用akshare获取个股日K数据
+                    stock_data = ak.stock_zh_a_hist_tx(symbol=stock_code, start_date=start_date, end_date=end_date, adjust="qfq")
+                    if not stock_data.empty:
+                        # 添加代码列
+                        stock_data['代码'] = stock_code
+                        # 确保列名统一
+                        column_mapping = {
+                            'date': '日期',
+                            'open': '开盘',
+                            'close': '收盘',
+                            'high': '最高',
+                            'low': '最低',
+                            'amount': '成交量'
+                        }
+                        stock_data = stock_data.rename(columns=column_mapping)
+                        history_data[stock_code] = stock_data
+                        logger.debug(f'成功获取{stock_code}的历史数据，共{len(stock_data)}条记录')
+                        break
+                    else:
+                        logger.warning(f'获取股票{stock_code}的历史数据为空，尝试重试 {retry_count + 1}/{max_retries}')
+                except Exception as e:
+                    logger.warning(f'获取股票{stock_code}的历史数据失败: {str(e)}，尝试重试 {retry_count + 1}/{max_retries}')
+                retry_count += 1
+                if retry_count < max_retries:
+                    time.sleep(1)  # 等待1秒后重试
+            
+            if retry_count == max_retries:
+                logger.error(f'获取股票{stock_code}的历史数据失败，已达到最大重试次数')
                 history_data[stock_code] = pd.DataFrame()  # 设置为空DataFrame
         
         logger.info(f'成功获取{len(history_data)}只股票的历史数据')
@@ -123,6 +149,11 @@ def calculate_multi_factors(data=None):
         # 合并因子数据
         merged_df = pd.merge(support_df, momentum_df, on='代码', how='inner')
         logger.info(f'成功合并因子数据，最终记录数：{len(merged_df)}')
+        
+        # 标准化处理：将支撑位和动量转换为百分位评分（0-1之间）
+        merged_df['支撑位评分'] = merged_df['支撑位'].rank(ascending=True) / len(merged_df)
+        merged_df['动量评分'] = merged_df['动量'].rank(ascending=True) / len(merged_df)
+        logger.info('完成因子标准化处理')
 
         # 新增新闻数据获取
         def get_stock_news(stock_code):

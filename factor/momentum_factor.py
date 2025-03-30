@@ -38,7 +38,7 @@ def calculate_momentum_factor(data, history_data=None, window=20):
                 stock_code = row['代码']
                 try:
                     # 使用akshare获取个股日K数据
-                    stock_data = ak.stock_zh_a_hist(symbol=stock_code, start_date=start_date, end_date=end_date, adjust="qfq")
+                    stock_data = ak.stock_zh_a_hist_tx(symbol=stock_code, start_date=start_date, end_date=end_date, adjust="qfq")
                     # 确保列名统一，如果存在"股票代码"列，将其重命名为"代码"
                     if "股票代码" in stock_data.columns and "代码" not in stock_data.columns:
                         stock_data = stock_data.rename(columns={"股票代码": "代码"})

@@ -42,7 +42,6 @@ CNStockGPT/
 │   └── multi_factor.py    # 多因子整合
 ├── utils/             # 工具模块
 │   ├── template.py    # HTML模板生成
-│   └── data_api_check.py  # 数据API检查
 ├── result/            # 结果输出目录
 └── readme.md          # 项目说明
 ```
