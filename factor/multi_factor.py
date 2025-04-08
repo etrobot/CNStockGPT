@@ -3,12 +3,29 @@ import pandas as pd
 import akshare as ak
 import os
 import time
+import sys
 from datetime import datetime, timedelta
-from factor.support_factor import calculate_support_factor  # Changed from relative to absolute import
-from factor.momentum_factor import calculate_momentum_factor  # Changed from relative to absolute import
-from utils.template import generate_html_table  # 新增导入
+
+# Add the project root directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from utils.template import generate_html_table
+from factor import AVAILABLE_FACTORS
 
 logger = logging.getLogger(__name__)
+
+def get_default_dates(start_date=None, end_date=None):
+    if end_date is None:
+        end_date = datetime.now()
+    if start_date is None:
+        start_date = end_date - timedelta(days=7*12)
+    return start_date, end_date
+
+def get_trading_days(start_date=None, end_date=None):
+    start_date, end_date = get_default_dates()
+    trading_days = ak.stock_zh_index_daily_em(symbol="sh000001", start_date=start_date.strftime('%Y%m%d'), end_date=end_date.strftime('%Y%m%d'))
+    trading_days = pd.to_datetime(trading_days['date']).dt.strftime('%Y%m%d').tolist()
+    return trading_days
 
 def get_stock_data():
     """
@@ -45,8 +62,11 @@ def get_stock_history_data(stock_codes, days=60):
         
         # 获取当前日期
         end_date = datetime.now().strftime('%Y%m%d')
-        # 计算开始日期（往前推指定天数，确保有足够的数据计算窗口）
-        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+        
+        # 获取交易日列表
+        trading_days = get_trading_days()
+        # 取最近days天的交易日
+        start_date = trading_days[-min(days, len(trading_days))]
         
         # 创建结果字典
         history_data = {}
@@ -112,12 +132,13 @@ def filter_top_stocks(data, top_n=100):
         logger.error(f'筛选股票数据失败: {str(e)}')
         raise
 
-def calculate_multi_factors(data=None):
+def calculate_multi_factors(data=None, selected_factors=None):
     """
     整合多个因子计算
     
     参数：
         data (DataFrame, optional): 包含成交额和价格数据的全量股票数据，如果为None则自动获取
+        selected_factors (list, optional): 要计算的因子列表，如果为None则计算所有可用因子
     
     返回：
         DataFrame: 合并后的多因子数据表
@@ -129,31 +150,82 @@ def calculate_multi_factors(data=None):
         if data is None:
             data = get_stock_data()
         
+        # 如果没有指定因子，使用所有可用因子
+        if selected_factors is None:
+            selected_factors = list(AVAILABLE_FACTORS.keys())
+        
         # 筛选成交额前100的股票
         top_100_stocks = filter_top_stocks(data)
         logger.info(f'筛选出成交额前100的股票，共{len(top_100_stocks)}条记录')
         
         # 集中获取所有股票的历史数据
         stock_codes = top_100_stocks['代码'].tolist()
-        history_data = get_stock_history_data(stock_codes, days=60)  # 获取60天的历史数据，足够计算各种因子
+        history_data = get_stock_history_data(stock_codes, days=60)
         logger.info(f'集中获取{len(history_data)}只股票的历史数据完成')
         
-        # 计算支撑因子
-        support_df = calculate_support_factor(top_100_stocks, history_data)
-        logger.debug('支撑因子计算完成')
-
-        # 计算动量因子
-        momentum_df = calculate_momentum_factor(top_100_stocks, history_data)
-        logger.debug('动量因子计算完成')
-
-        # 合并因子数据
-        merged_df = pd.merge(support_df, momentum_df, on='代码', how='inner')
-        logger.info(f'成功合并因子数据，最终记录数：{len(merged_df)}')
+        # 初始化结果DataFrame
+        merged_df = None
         
-        # 标准化处理：将支撑位和动量转换为百分位评分（0-1之间）
-        merged_df['支撑位评分'] = merged_df['支撑位'].rank(ascending=True) / len(merged_df)
-        merged_df['动量评分'] = merged_df['动量'].rank(ascending=True) / len(merged_df)
-        logger.info('完成因子标准化处理')
+        # 依次计算每个因子
+        for factor_key in selected_factors:
+            if factor_key not in AVAILABLE_FACTORS:
+                logger.warning(f'跳过未知因子: {factor_key}')
+                continue
+                
+            factor_info = AVAILABLE_FACTORS[factor_key]
+            factor_func = factor_info['func']
+            factor_name = factor_info['name']
+            
+            logger.debug(f'开始计算{factor_name}因子')
+            factor_df = factor_func(top_100_stocks, history_data)
+            
+            # Debug logging
+            logger.debug(f"Factor DataFrame columns: {factor_df.columns.tolist()}")
+            
+            # Check if factor calculation returned valid data
+            if factor_df is None or factor_df.empty:
+                logger.warning(f'{factor_name}因子计算返回空数据，跳过')
+                continue
+            
+            # 合并因子数据
+            if merged_df is None:
+                merged_df = factor_df
+            else:
+                # Standardize column names
+                merged_df = merged_df.rename(columns=lambda x: str(x).strip())
+                factor_df = factor_df.rename(columns=lambda x: str(x).strip())
+                
+                # Debug logging
+                logger.debug(f"Merged DataFrame columns before merge: {merged_df.columns.tolist()}")
+                logger.debug(f"Factor DataFrame columns before merge: {factor_df.columns.tolist()}")
+                
+                # Merge on 代码 column
+                merged_df = pd.merge(merged_df, factor_df, on='代码', how='inner')
+            
+            # Debug logging
+            logger.debug(f"Merged DataFrame columns after merge: {merged_df.columns.tolist()}")
+            
+            # Find the actual factor column name
+            factor_columns = [col for col in merged_df.columns if factor_name in col]
+            if not factor_columns:
+                logger.error(f'找不到{factor_name}相关的列')
+                continue
+                
+            actual_factor_column = factor_columns[0]
+            
+            # 标准化处理
+            score_column = f'{factor_name}评分'
+            try:
+                merged_df[score_column] = merged_df[actual_factor_column].rank(ascending=True) / len(merged_df)
+                logger.debug(f'{factor_name}因子标准化完成')
+            except Exception as e:
+                logger.error(f'标准化{factor_name}因子时出错: {str(e)}')
+                continue
+
+        if merged_df is None or merged_df.empty:
+            raise ValueError('没有成功计算任何因子数据')
+
+        logger.info(f'成功合并因子数据，最终记录数：{len(merged_df)}')
 
         # 新增新闻数据获取
         def get_stock_news(stock_code):
@@ -215,7 +287,6 @@ if __name__ == '__main__':
         
         # 获取数据并计算多因子
         result = calculate_multi_factors()
-        print('\n多因子计算结果:\n', result.head())
         logger.info(f"调试运行完成，共计算{len(result)}条记录")
         
     except Exception as e:

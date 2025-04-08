@@ -1,76 +1,102 @@
 import logging
 import pandas as pd
-import akshare as ak
-from datetime import datetime, timedelta
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
-def calculate_momentum_factor(data, history_data=None, window=20):
+def calculate_momentum_factor(data, history_data=None, window=50):
     """
-    计算动量因子：N日收益率
-    
-    参数：
-        data (DataFrame): 包含['代码']的股票数据，应该是已经筛选过的前100只股票
-        history_data (dict): 以股票代码为键，历史数据DataFrame为值的字典，如果为None则自动获取
-        window (int): 计算窗口，默认20天
-    
-    返回：
-        DataFrame: 包含['代码','动量']的因子数据
+    计算动量因子：(累计高收差-累计缺口)/首日价格
     """
     try:
-        logger.info('开始计算动量因子...')
+        logger.info(f'开始计算动量因子，共{len(data)}只股票...')
         
+        if data.empty:
+            logger.error('输入的股票数据为空')
+            return pd.DataFrame()
+            
+        if not history_data:
+            logger.error('历史数据字典为空')
+            return pd.DataFrame()
+
         # 创建结果DataFrame
-        result_df = pd.DataFrame()
-        
-        # 如果没有传入历史数据，则自动获取
-        if history_data is None:
-            # 获取当前日期
-            end_date = datetime.now().strftime('%Y%m%d')
-            # 计算开始日期（往前推60天，确保有足够的数据计算窗口）
-            start_date = (datetime.now() - timedelta(days=60)).strftime('%Y%m%d')
-            
-            # 创建临时历史数据字典
-            history_data = {}
-            
-            # 遍历每只股票，获取日K数据
-            for _, row in data.iterrows():
-                stock_code = row['代码']
-                try:
-                    # 使用akshare获取个股日K数据
-                    stock_data = ak.stock_zh_a_hist_tx(symbol=stock_code, start_date=start_date, end_date=end_date, adjust="qfq")
-                    # 确保列名统一，如果存在"股票代码"列，将其重命名为"代码"
-                    if "股票代码" in stock_data.columns and "代码" not in stock_data.columns:
-                        stock_data = stock_data.rename(columns={"股票代码": "代码"})
-                    history_data[stock_code] = stock_data
-                except Exception as e:
-                    logger.warning(f'获取股票{stock_code}的历史数据失败: {str(e)}')
-                    history_data[stock_code] = pd.DataFrame()
-        
+        result_data = []
+        processed_count = 0
+        error_count = 0
+
         # 遍历每只股票，计算动量
         for _, row in data.iterrows():
             stock_code = row['代码']
+            
+            # 获取股票历史数据
+            stock_data = history_data.get(stock_code)
+            
+            if stock_data is None or stock_data.empty:
+                logger.warning(f'股票{stock_code}没有历史数据')
+                error_count += 1
+                continue
+
             try:
-                # 获取股票历史数据
-                stock_data = history_data.get(stock_code, pd.DataFrame())
+                if len(stock_data) <= window:
+                    logger.warning(f'股票{stock_code}的历史数据不足{window}天 (实际: {len(stock_data)}天)')
+                    error_count += 1
+                    continue
+
+                # 获取窗口内数据
+                window_data = stock_data.tail(window)
+
+                # 计算高收差的累计值
+                high_close_diff = (window_data['最高'] - window_data['收盘']).sum()
                 
-                if not stock_data.empty and len(stock_data) > window:
-                    # 计算N日收益率作为动量
-                    first_price = stock_data['收盘'].iloc[-window-1] if len(stock_data) > window else stock_data['收盘'].iloc[0]
-                    last_price = stock_data['收盘'].iloc[-1]
-                    momentum_value = (last_price - first_price) / first_price if first_price > 0 else 0
-                    
-                    # 添加到结果DataFrame
-                    result_df = pd.concat([result_df, pd.DataFrame({'代码': [stock_code], '动量': [momentum_value]})], ignore_index=True)
-                    logger.debug(f'成功计算{stock_code}的动量: {momentum_value}')
-                else:
-                    logger.warning(f'股票{stock_code}的历史数据{len(stock_data)}天，不足{window+1}天，跳过计算')
+                # 计算缺口大小
+                gaps = window_data['开盘'].shift(-1) - window_data['收盘']
+                gaps = gaps.abs().sum()
+
+                # 获取首日收盘价
+                first_price = window_data['收盘'].iloc[0]
+
+                if first_price <= 0:
+                    logger.warning(f'股票{stock_code}的首日价格异常: {first_price}')
+                    error_count += 1
+                    continue
+
+                # 计算动量值
+                momentum_value = (high_close_diff - gaps) / first_price
+                
+                # 添加到结果列表
+                result_data.append({
+                    '代码': stock_code,
+                    '动量': momentum_value,
+                    '股票名称': row.get('名称', '')  # 如果原始数据中有名称列就保留
+                })
+                
+                processed_count += 1
+                
             except Exception as e:
-                logger.warning(f'获取股票{stock_code}的历史数据失败: {str(e)}')
+                logger.warning(f'计算股票{stock_code}的动量因子失败: {str(e)}')
+                error_count += 1
+
+        # 转换为DataFrame
+        result_df = pd.DataFrame(result_data)
         
-        logger.info(f'成功计算{len(result_df)}只股票的{window}日动量')
+        # 输出详细的统计信息
+        logger.info(f'''动量因子计算完成:
+        - 总股票数: {len(data)}
+        - 成功计算: {processed_count}
+        - 计算失败: {error_count}
+        ''')
+
+        if result_df.empty:
+            logger.error('没有成功计算出任何股票的动量因子')
+            return pd.DataFrame()
+
+        # 处理异常值
+        result_df['动量'] = result_df['动量'].replace([np.inf, -np.inf], np.nan)
+        result_df = result_df.dropna(subset=['动量'])
+
+        logger.info(f'最终得到{len(result_df)}只股票的有效动量因子')
         return result_df
 
     except Exception as e:
-        logger.error(f'计算动量因子失败: {str(e)}')
-        raise
+        logger.error(f'动量因子计算过程发生错误: {str(e)}')
+        return pd.DataFrame()
