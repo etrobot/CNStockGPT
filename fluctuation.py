@@ -5,6 +5,19 @@ import requests
 import akshare as ak
 import time as t
 
+HEADERS = {
+    'Accept': '*/*',
+    'Accept-Language': 'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6,ja;q=0.5',
+    'Connection': 'keep-alive',
+    'Sec-Fetch-Dest': 'script',
+    'Sec-Fetch-Mode': 'no-cors',
+    'Sec-Fetch-Site': 'same-site',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+    'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"macOS"',
+}
+
 def parse_jsonp(jsonp_str):
     if not jsonp_str or not isinstance(jsonp_str, str):
         print("错误：输入不是有效的字符串")
@@ -29,23 +42,10 @@ def getChanges():
     rest_df = concept_df[~concept_df['板块代码'].isin(risingConceptsCodes)]
     # 拼接
     changedConcepts_df = pd.concat([ordered_df, rest_df], ignore_index=True)
-    headers = {
-        'Accept': '*/*',
-        'Accept-Language': 'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6,ja;q=0.5',
-        'Connection': 'keep-alive',
-        'Referer': 'https://quote.eastmoney.com/changes/',
-        'Sec-Fetch-Dest': 'script',
-        'Sec-Fetch-Mode': 'no-cors',
-        'Sec-Fetch-Site': 'same-site',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"macOS"',
-    }
     
     response = requests.get(
         'https://push2ex.eastmoney.com/getAllStockChanges?type=8201,8202,8193,4,32,64,8207,8209,8211,8213,8215,8204,8203,8194,8,16,128,8208,8210,8212,8214,8216&cb=jQuery35108409427522251944_1753773534498&ut=7eea3edcaed734bea9cbfc24409ed989&pageindex=0&pagesize=1000&dpt=wzchanges&_=1753773534514',
-        headers=headers,
+        headers={**HEADERS, 'Referer': 'https://quote.eastmoney.com/changes/'},
     )
     
     # 解析JSONP响应
@@ -165,21 +165,7 @@ def getChanges():
 
 
 def getRisingConcepts():
-
-    headers = {
-        'Accept': '*/*',
-        'Accept-Language': 'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6,ja;q=0.5',
-        'Connection': 'keep-alive',
-        'Referer': 'https://quote.eastmoney.com/center/gridlist.html',
-        'Sec-Fetch-Dest': 'script',
-        'Sec-Fetch-Mode': 'no-cors',
-        'Sec-Fetch-Site': 'same-site',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"macOS"',
-    }
-
+    
     url = "https://79.push2.eastmoney.com/api/qt/clist/get"
     params = {
         "pn": "1",
@@ -194,7 +180,7 @@ def getRisingConcepts():
         "fields": "f3,f12,f14,f20",
         "_": "1626075887768",
     }
-    response=requests.get(url=url,params=params,headers=headers)
+    response=requests.get(url=url,params=params,headers={**HEADERS, 'Referer': 'https://quote.eastmoney.com/center/gridlist.html'})
     data = parse_jsonp(response.text)['data']['diff']
     bkcodes = [ x['f12'] for x in data if int(x['f20'])<5000000000000 and not '昨日' in x['f14']]
     return bkcodes
@@ -222,4 +208,15 @@ def getConcepts():
 if __name__ == '__main__':
     if not os.path.exists('concepts.csv'):
         getConcepts()
-    getChanges()
+    while True:
+        now = t.localtime()
+        now_minutes = now.tm_hour * 60 + now.tm_min
+        # 定义允许的时间段（分钟）
+        allowed_periods = [
+            (9*60+30, 11*60+30),   # 上午9:30-11:30
+            (13*60, 15*60)         # 下午13:00-15:00
+        ]
+        in_period = any(start <= now_minutes <= end for start, end in allowed_periods)
+        if in_period:
+            getChanges()
+            t.sleep(2)
