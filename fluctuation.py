@@ -33,8 +33,7 @@ def parse_jsonp(jsonp_str):
         return json.loads(jsonp_str)
 
 
-def getChanges():
-    concept_df = pd.read_csv('concepts.csv')
+def getChanges(concept_df: pd.DataFrame):
     risingConceptsCodes = getRisingConcepts()
     # 先取出在risingConceptsCodes中的部分，按顺序排列
     ordered_df = concept_df[concept_df['板块代码'].isin(risingConceptsCodes)].set_index('板块代码').loc[risingConceptsCodes].reset_index()
@@ -76,10 +75,10 @@ def getChanges():
                 if not df.empty:
                     df['涨跌幅'] = info_df[0]
                 
-            df = df[df['涨跌幅'] < 1]
+            df = df[(df['涨跌幅'] < 1) & ((df['涨跌幅'] >= 0.05) | (df['涨跌幅'] <= -0.05))]
         
         # 过滤掉负面类型
-        negative_types = ['8194', '8', '128', '8208', '8210', '8212', '8214', '8216', '8203', '4', '99', '106']  # 包含大笔卖出、封跌停板、竞价下跌、向下缺口、60日新低、60日大幅下跌、高台跳水、加速下跌等
+        negative_types = ['8194', '8', '128', '8208', '8210', '8212', '8214', '8216', '8203', '99', '106']  # 包含大笔卖出、封跌停板、竞价下跌、向下缺口、60日新低、60日大幅下跌、高台跳水、加速下跌等
         df = df[~df['类型'].astype(str).isin(negative_types)]
         
         # 转换为指定的输出格式
@@ -139,28 +138,27 @@ def getChanges():
         output_df = output_df.sort_values('时间')       
 
         # 先排序再加上午/下午列
-        html_df = output_df[['板块名称', '时间', '名称', '相关信息', '四舍五入取整']].copy()
+        html_df = output_df[['板块名称', '时间', '名称', '相关信息','类型', '四舍五入取整']].copy()
         def am_pm_col(tm):
             hour = int(tm[:2])
             return '上午' if hour < 12 else '下午'
         html_df['上下午'] = html_df['时间'].apply(am_pm_col)
         # 新增一列用于排序，转为分钟数
         html_df['时间排序'] = html_df['时间'].apply(lambda tm: int(tm[:2])*60 + int(tm[3:5]))
-        html_df = html_df.sort_values(['板块名称', '时间排序'])
-        html_df = html_df[['板块名称', '上下午', '时间', '名称', '相关信息', '四舍五入取整']]
-        html_df.to_html('changes_by_concept.html', index=False, encoding='utf-8')
-
+        html_df = html_df.sort_values(['上下午','板块名称', '时间排序'])
+        # 确保 static 目录存在
+        os.makedirs('static', exist_ok=True)
+        # 保存到 static 目录下
         # 保存为csv，追加且去重（股票代码+时间+四舍五入取整）
-        csv_file = 'changes.csv'
-        save_cols = ['板块名称', '上下午', '时间', '名称', '相关信息', '四舍五入取整']
+        csv_file = 'static/changes.csv'
         if os.path.exists(csv_file):
             old_df = pd.read_csv(csv_file)
-            combined = pd.concat([old_df, html_df[save_cols]], ignore_index=True)
+            combined = pd.concat([old_df, html_df], ignore_index=True)
             # 去重，保留最新一条
-            combined = combined.drop_duplicates(subset=['名称', '时间', '四舍五入取整'], keep='last')
+            combined = combined.drop_duplicates(subset=['名称', '类型'], keep='last')
             combined.to_csv(csv_file, index=False, encoding='utf-8')
         else:
-            html_df[save_cols].drop_duplicates(subset=['名称', '时间', '四舍五入取整'], keep='last').to_csv(csv_file, index=False, encoding='utf-8')
+            html_df.drop_duplicates(subset=['名称', '类型'], keep='last').to_csv(csv_file, index=False, encoding='utf-8')
         print(f"已保存到{csv_file}，当前总行数：", pd.read_csv(csv_file).shape[0])
 
 
@@ -188,26 +186,24 @@ def getRisingConcepts():
 def getConcepts():
     concepts=[['板块代码','板块名称','股票代码','股票名称']]
     stock_board_concept_name_em_df = ak.stock_board_concept_name_em()
-    count=0
+    stock_board_concept_name_em_df.sort_values(by='总市值',ascending=True,inplace=True)
     for k,v in stock_board_concept_name_em_df.iterrows():
-        if int(v['总市值'])>5000000000000 or '昨日' in v['板块名称']:
+        if int(v['总市值'])>30000000000000 or '昨日' in v['板块名称']:
             continue
         stock_board_concept_spot_em_df = ak.stock_board_concept_cons_em(symbol=v['板块代码'])
         for k2,v2 in stock_board_concept_spot_em_df.iterrows():
             row = [v['板块代码'],v['板块名称'],v2['代码'],v2['名称']]
             concepts.append(row)
-        print(v['板块名称'])
-        count+=1
-        if count>10:
-            t.sleep(5)
-            count=0
+        print(v['板块名称'],len(concepts))
+        if len(concepts)%20==0:
+            t.sleep(15)
     df = pd.DataFrame(concepts,columns=['板块代码','板块名称','股票代码','股票名称'])
-    df.to_csv('concepts.csv',index=False)
+    df.to_csv('static/concepts.csv',index=False)
 
-
-if __name__ == '__main__':
-    if not os.path.exists('concepts.csv'):
+def watch():
+    if not os.path.exists('static/concepts.csv'):
         getConcepts()
+    concept_df = pd.read_csv('static/concepts.csv')
     while True:
         now = t.localtime()
         now_minutes = now.tm_hour * 60 + now.tm_min
@@ -218,5 +214,11 @@ if __name__ == '__main__':
         ]
         in_period = any(start <= now_minutes <= end for start, end in allowed_periods)
         if in_period:
-            getChanges()
-            t.sleep(2)
+            getChanges(concept_df)
+        t.sleep(2)
+
+def main():
+    watch()
+
+if __name__ == '__main__':
+    main()

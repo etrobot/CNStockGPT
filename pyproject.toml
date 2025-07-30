@@ -20,6 +20,9 @@ dependencies = [
     "numpy>=1.21",
     "akshare>=1.3",
     "scipy>=1.7",
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
+    "jinja2>=3.1.6",
 ]
 
 [project.optional-dependencies]

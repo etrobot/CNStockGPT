@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>盘口异动</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Umbrella JS -->
+    <script src="https://cdn.jsdelivr.net/npm/umbrellajs"></script>
+    <script>
+        // Function to load and display data
+        function loadData() {
+            fetch('/api/changes/json', {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            })
+            .then(function(response) {
+                if (!response.ok) throw new Error('Network response was not ok');
+                return response.json();
+            })
+            .then(function(data) {
+                if (data && data.length > 0) {
+                    const concepts = {};
+                    data.forEach(item => {
+                        const conceptName = item["板块名称"];
+                        if (!concepts[conceptName]) {
+                            concepts[conceptName] = { "上午": {}, "下午": {} };
+                        }
+                        
+                        const time = item["时间"];
+                        const name = item["名称"];
+                        const roundedValue = item["四舍五入取整"];
+                        const type = item["类型"];
+
+                        let valueStr = roundedValue > 0 ? `+${roundedValue}` : roundedValue;
+
+                        if (type === "封涨停板") {
+                            valueStr = `<span class='text-red-600'>${valueStr}</span>`;
+                        }
+
+                        const info = `<span>${name} ${valueStr}</span>`;
+                        const period = item["上下午"];
+
+                        if (period === "上午" || period === "下午") {
+                            if (!concepts[conceptName][period][time]) {
+                                concepts[conceptName][period][time] = [];
+                            }
+                            concepts[conceptName][period][time].push(info);
+                        }
+                    });
+
+                    let tableBodyHtml = '';
+                    for (const conceptName in concepts) {
+                        let rowHtml = '<tr>';
+                        rowHtml += `<td class="p-2 font-semibold align-top border">${conceptName}</td>`;
+
+                        for (const period of ["上午", "下午"]) {
+                            let periodHtml = '<td class="p-2 align-top border">';
+                            const timeGroups = concepts[conceptName][period];
+                            const sortedTimes = Object.keys(timeGroups).sort();
+
+                            for (const time of sortedTimes) {
+                                const stocks = timeGroups[time].join(', ');
+                                periodHtml += `<p>${time} ${stocks}</p>`;
+                            }
+                            periodHtml += '</td>';
+                            rowHtml += periodHtml;
+                        }
+
+                        rowHtml += '</tr>';
+                        tableBodyHtml += rowHtml;
+                    }
+                    
+                    u('#concepts-body').html(tableBodyHtml);
+                    
+                    // Show table and hide loading message
+                    u('#loading').addClass('hidden');
+                    u('#data-container').removeClass('hidden');
+                } else {
+                    u('#loading').html('No data available');
+                }
+            })
+            .catch(function(error) {
+                console.error('Error loading data:', error);
+                u('#loading').html('Error loading data. Please try again later.');
+            });
+        }
+        
+        // Load data when page loads
+        document.addEventListener('DOMContentLoaded', loadData);
+            
+        // Optional: Add refresh button functionality
+        u('#refresh-btn').on('click', function() {
+            u('#loading').removeClass('hidden').html('Refreshing data...');
+            u('#data-container').addClass('hidden');
+            loadData();
+        });
+    </script>
+</head>
+<body class="bg-gray-100 p-6">
+    <div class="container mx-auto bg-white rounded-lg shadow-md p-6 max-w-7xl">
+        <h1 class="text-2xl font-bold text-gray-800 text-center mb-6">盘口异动</h1>
+        <div class="mt-6">
+            <div id="loading" class="text-center py-4">Loading data...</div>
+            <div id="data-container" class="hidden">
+                <table class="w-full text-xs border-collapse table-fixed">
+                    <thead>
+                        <tr class="bg-amber-100">
+                            <th class="p-2 border" style="width: 10%;">板块</th>
+                            <th class="p-2 border" style="width: 45%;">上午</th>
+                            <th class="p-2 border" style="width: 45%;">下午</th>
+                        </tr>
+                    </thead>
+                    <tbody id="concepts-body" class="divide-y divide-gray-200">
+                        <!-- Data will be injected here by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="mt-6 mb-3">
+            <button id="refresh-btn" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Refresh Data</button>
+        </div>
+    </div>
+</body>
+</html>
